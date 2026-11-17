@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Brand from "./Brand";
+import Avatar from "./Avatar";
 import Login from "./Login";
 import {
   Activity,
@@ -24,6 +25,7 @@ import {
   Button,
   ErrorBox,
   Loading,
+  useLoad,
   type Operation,
 } from "./ui";
 import Dashboard from "./Dashboard";
@@ -53,6 +55,10 @@ export default function App() {
     [page, setPage] = useState(location.hash.slice(1) || "overview"),
     [menu, setMenu] = useState(false),
     [operation, setOperation] = useState<Operation | null>(null);
+  const context = useLoad(
+    () => (session ? request("/context") : Promise.resolve(null)),
+    [session?.userId, session?.homeserver],
+  );
   const login = (s: Session | null) => {
     setSession(s);
     saveSession(s);
@@ -88,7 +94,8 @@ export default function App() {
       </div>
     );
   if (!session) return <Login onLogin={login} />;
-  const name = session.userId.slice(1).split(":")[0];
+  const name =
+    context.data?.profile?.displayname || session.userId.slice(1).split(":")[0];
   return (
     <div className="app-shell">
       {menu && (
@@ -108,7 +115,11 @@ export default function App() {
             <strong>{new URL(session.homeserver).host}</strong>
             <small>
               <span className="dot" />
-              当前服务器
+              {context.data?.version?.server_version
+                ? `${context.data.version.server_name || "Tuwunel"} ${context.data.version.server_version}`
+                : context.data?.versionError
+                  ? "版本读取失败"
+                  : "正在读取版本…"}
             </small>
           </div>
           <ShieldCheck size={14} />
@@ -140,7 +151,7 @@ export default function App() {
           </a>
           <div className="version">
             <span>tuwunel admin</span>
-            <Badge>v1.2</Badge>
+            <Badge>v1.3</Badge>
           </div>
         </div>
       </aside>
@@ -166,9 +177,11 @@ export default function App() {
               管理员
             </Badge>
             <span className="top-separator" />
-            <span className="user-avatar">
-              {name.slice(0, 1).toUpperCase()}
-            </span>
+            <Avatar
+              name={name}
+              mxc={context.data?.profile?.avatar_url}
+              homeserver={session.homeserver}
+            />
             <span className="top-name">{name}</span>
             <Button
               kind="icon"
@@ -217,7 +230,13 @@ export default function App() {
       {operation && (
         <ActionDialog
           key={operation.title}
-          operation={operation}
+          operation={{
+            ...operation,
+            onDone: () => {
+              operation.onDone?.();
+              context.reload();
+            },
+          }}
           onClose={() => setOperation(null)}
         />
       )}

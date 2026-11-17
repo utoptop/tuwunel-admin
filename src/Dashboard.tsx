@@ -63,6 +63,11 @@ export default function Dashboard({
           <span>当前连接</span>
           <h2>{new URL(session.homeserver).host}</h2>
           <p>{session.userId}</p>
+          <small className="server-version">
+            {d?.version?.data
+              ? `${d.version.data.server_name || "Tuwunel"} ${d.version.data.server_version}`
+              : d?.version?.error || "正在读取服务器版本…"}
+          </small>
         </div>
         <Badge tone="green">
           <ShieldCheck size={12} />
@@ -247,7 +252,7 @@ export default function Dashboard({
         </div>
         <div className="strip-right">
           <Badge tone="purple">Matrix Admin API</Badge>
-          <span>管理系统 v1.2.0</span>
+          <span>管理系统 v1.3.0</span>
         </div>
       </div>
     </>

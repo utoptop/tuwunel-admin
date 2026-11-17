@@ -429,7 +429,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       </main>
       <footer className="access-footer">
         <span>
-          TUWUNEL ADMIN <b>1.2</b>
+          TUWUNEL ADMIN <b>1.3</b>
         </span>
         <span>开放连接，自主管理。</span>
       </footer>

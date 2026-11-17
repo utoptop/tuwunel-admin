@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Avatar from "./Avatar";
+import { BridgeCleanup, BridgeJobs } from "./BridgeCleanup";
 import {
   ArrowUpRight,
   ChevronRight,
@@ -11,7 +12,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { admin, fmtDate, bytes, type Data, type Session } from "./api";
+import { admin, request, fmtDate, bytes, type Data, type Session } from "./api";
 import {
   Badge,
   Button,
@@ -50,23 +51,30 @@ export function UsersPage({
     [query, setQuery] = useState(""),
     [from, setFrom] = useState(0),
     [filter, setFilter] = useState("all"),
-    [selected, setSelected] = useState("");
-  const result = useLoad(
-    () =>
-      admin(
-        "users",
-        {},
-        {
-          from,
-          limit: 20,
-          name: query,
-          deactivated: filter !== "active",
-          locked: true,
-          ...(filter === "admin" ? { admins: true } : {}),
-        },
-      ),
-    [from, query, filter],
-  );
+    [selected, setSelected] = useState(""),
+    [group, setGroup] = useState("regular"),
+    [checked, setChecked] = useState<string[]>([]),
+    [cleanup, setCleanup] = useState<Data | null>(null),
+    [refresh, setRefresh] = useState(0);
+  const lastRefresh = useRef(0);
+  const directoryFilter = { from, search: query, group, status: filter };
+  const result = useLoad(() => {
+    const force = refresh !== lastRefresh.current;
+    lastRefresh.current = refresh;
+    return request("/directory", "POST", {
+      ...directoryFilter,
+      refresh: force,
+    });
+  }, [from, query, filter, group, refresh]);
+  const reload = () => {
+    setChecked([]);
+    setRefresh((v) => v + 1);
+  };
+  const switchGroup = (value: string) => {
+    setGroup(value);
+    setFrom(0);
+    setChecked([]);
+  };
   const create = () =>
     operate({
       title: "创建用户",
@@ -111,7 +119,7 @@ export function UsersPage({
         }
         throw new Error("用户已存在，请使用编辑功能，避免覆盖账号");
       },
-      onDone: result.reload,
+      onDone: reload,
     });
   return (
     <>
@@ -125,10 +133,60 @@ export function UsersPage({
           创建用户
         </Button>
       </PageTitle>
+      <div className="directory-tabs" role="group" aria-label="用户分类">
+        {[
+          ["regular", "普通用户", result.data?.counts?.regular],
+          ["bridges", "桥接用户", result.data?.counts?.bridges],
+          ["all", "全部账号", result.data?.counts?.all],
+        ].map(([key, label, count]) => (
+          <button
+            key={key}
+            className={
+              group === key ||
+              (key === "bridges" && !["regular", "all"].includes(group))
+                ? "active"
+                : ""
+            }
+            onClick={() => switchGroup(key)}
+          >
+            {label}
+            <span>{count ?? "—"}</span>
+          </button>
+        ))}
+      </div>
+      {!["regular", "all"].includes(group) && (
+        <div className="bridge-tools">
+          <p>
+            根据 Signal UUID、Telegram 数字 ID
+            或部署规则分类。请核对目标并先停止对应桥接，再清理账号和本地媒体。
+          </p>
+          <div className="actions">
+            <Button
+              disabled={!checked.length}
+              onClick={() => setCleanup({ ids: checked })}
+            >
+              预览清理所选（{checked.length}）
+            </Button>
+            <Button
+              kind="danger-soft"
+              disabled={!result.data?.total}
+              onClick={() => setCleanup({ all: true, filter: directoryFilter })}
+            >
+              预览清理此筛选的全部用户
+            </Button>
+          </div>
+        </div>
+      )}
       <Panel>
         <div className="table-heading">
           <div>
-            <h2>成员目录</h2>
+            <h2>
+              {group === "regular"
+                ? "成员目录"
+                : group === "all"
+                  ? "全部账号"
+                  : "桥接成员目录"}
+            </h2>
             <p>当前服务器上的用户与访问权限</p>
           </div>
           <Badge>
@@ -163,11 +221,27 @@ export function UsersPage({
               setFrom(0);
             }}
           >
-            <option value="all">全部用户（含停用）</option>
+            <option value="all">全部状态（含停用）</option>
             <option value="active">未停用用户</option>
             <option value="admin">管理员</option>
           </select>
-          <Refresh onClick={result.reload} />
+          {!["regular", "all"].includes(group) && (
+            <select
+              aria-label="桥接类型"
+              value={group}
+              onChange={(e) => switchGroup(e.target.value)}
+            >
+              <option value="bridges">全部桥接</option>
+              {Object.entries(result.data?.groups || {}).map(
+                ([name, count]) => (
+                  <option key={name} value={name}>
+                    {name}（{String(count)}）
+                  </option>
+                ),
+              )}
+            </select>
+          )}
+          <Refresh onClick={reload} />
         </div>
         <ErrorBox error={result.error} />
         {result.loading ? (
@@ -179,7 +253,32 @@ export function UsersPage({
             <table>
               <thead>
                 <tr>
-                  <th>用户</th>
+                  <th>
+                    {!["regular", "all"].includes(group) && (
+                      <input
+                        type="checkbox"
+                        aria-label="选择本页桥接用户"
+                        checked={
+                          Boolean(
+                            result.data?.users?.some((u: Data) => !u.protected),
+                          ) &&
+                          result.data.users
+                            .filter((u: Data) => !u.protected)
+                            .every((u: Data) => checked.includes(u.name))
+                        }
+                        onChange={(e) =>
+                          setChecked(
+                            e.target.checked
+                              ? result
+                                  .data!.users.filter((u: Data) => !u.protected)
+                                  .map((u: Data) => u.name)
+                              : [],
+                          )
+                        }
+                      />
+                    )}{" "}
+                    用户
+                  </th>
                   <th>角色</th>
                   <th>状态</th>
                   <th>最近在线</th>
@@ -190,26 +289,47 @@ export function UsersPage({
                 {result.data.users.map((u: Data) => (
                   <tr key={u.name}>
                     <td>
-                      <button
-                        className="identity"
-                        onClick={() => setSelected(u.name)}
-                      >
-                        <Avatar
-                          name={u.displayname || u.name}
-                          mxc={u.avatar_url}
-                          homeserver={session.homeserver}
-                        />
-                        <span>
-                          <strong>
-                            {u.displayname || u.name.split(":")[0].slice(1)}
-                          </strong>
-                          <small>{u.name}</small>
-                        </span>
-                      </button>
+                      <div className="user-select-row">
+                        {!["regular", "all"].includes(group) && (
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 ${u.name}`}
+                            disabled={u.protected}
+                            checked={checked.includes(u.name)}
+                            onChange={(e) =>
+                              setChecked((v) =>
+                                e.target.checked
+                                  ? [...v, u.name]
+                                  : v.filter((id) => id !== u.name),
+                              )
+                            }
+                          />
+                        )}
+                        <button
+                          className="identity"
+                          onClick={() => setSelected(u.name)}
+                        >
+                          <Avatar
+                            name={u.displayname || u.name}
+                            mxc={u.avatar_url}
+                            homeserver={session.homeserver}
+                          />
+                          <span>
+                            <strong>
+                              {u.displayname || u.name.split(":")[0].slice(1)}
+                            </strong>
+                            <small>{u.name}</small>
+                          </span>
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <Badge tone={u.admin ? "purple" : ""}>
-                        {u.admin ? "管理员" : "普通用户"}
+                        {u.admin
+                          ? "管理员"
+                          : u.bridge
+                            ? u.bridge.name
+                            : "普通用户"}
                       </Badge>
                     </td>
                     <td>
@@ -235,6 +355,18 @@ export function UsersPage({
           onChange={setFrom}
         />
       </Panel>
+      <BridgeJobs onRetry={(ids) => setCleanup({ ids })} />
+      {cleanup && (
+        <BridgeCleanup
+          selection={cleanup}
+          session={session}
+          onClose={() => setCleanup(null)}
+          onStarted={() => {
+            setCleanup(null);
+            reload();
+          }}
+        />
+      )}
       <p className="footnote">
         用户 ID 保留在 Matrix
         网络中。停用并擦除不会物理删除账号标识或其他服务器上的副本。
@@ -246,7 +378,7 @@ export function UsersPage({
           operate={operate}
           onClose={() => {
             setSelected("");
-            result.reload();
+            reload();
           }}
         />
       )}
@@ -281,7 +413,9 @@ function UserDetail({
     () =>
       tab === "profile"
         ? Promise.resolve(null)
-        : admin(tab, { user_id: id }, { from, limit: 20 }),
+        : tab === "userRooms"
+          ? request("/user-rooms", "POST", { user_id: id, from })
+          : admin(tab, { user_id: id }, { from, limit: 20 }),
     [id, tab, from],
   );
   const u = detail.data || {};
@@ -512,16 +646,41 @@ function UserDetail({
           <Loading />
         ) : tab === "userRooms" ? (
           <>
-            {info.data?.joined_rooms?.length ? (
-              info.data.joined_rooms.map((room: string) => (
-                <div className="list-line" key={room}>
-                  <Users size={16} />
-                  <code>{room}</code>
+            {info.data?.rooms?.length ? (
+              info.data.rooms.map((room: Data) => (
+                <div className="user-room-row" key={room.room_id}>
+                  <Avatar
+                    name={room.name || "房间"}
+                    mxc={room.avatar}
+                    homeserver={session.homeserver}
+                  />
+                  <div>
+                    <strong>
+                      {room.name ||
+                        (room.error ? "房间资料暂不可用" : "未命名房间")}
+                    </strong>
+                    <code>{room.room_id}</code>
+                    {room.canonical_alias && (
+                      <small>{room.canonical_alias}</small>
+                    )}
+                    {room.error && (
+                      <small className="room-error">{room.error}</small>
+                    )}
+                  </div>
+                  {room.joined_members !== undefined && (
+                    <Badge>{room.joined_members} 位成员</Badge>
+                  )}
                 </div>
               ))
             ) : (
               <Empty text="该用户未加入房间" />
             )}
+            <Pagination
+              from={from}
+              next={info.data?.next_token}
+              total={info.data?.total}
+              onChange={setFrom}
+            />
           </>
         ) : tab === "devices" ? (
           <>

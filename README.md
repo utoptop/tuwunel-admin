@@ -2,7 +2,7 @@
 
 中文 Tuwunel / Matrix 管理中心。**Rust + Tokio + Axum 后端，React / TypeScript 前端**。生产镜像不再需要 Node.js，所有运行设置通过 `config.toml` 管理，不读取 `.env`。
 
-当前版本 **1.2.0**；双架构镜像 `utoptop/tuwunel-admin:1.2`，同时更新原约定的 `:1.0` 标签。支持 `linux/amd64` / `linux/arm64`。MIT License。
+当前版本 **1.3.0**；双架构镜像 `utoptop/tuwunel-admin:1.3`，同时更新原约定的 `:1.0` 标签。支持 `linux/amd64` / `linux/arm64`。MIT License。
 
 ## 本次改进
 
@@ -209,9 +209,62 @@ API 映射保存在 [backend/catalog.json](backend/catalog.json)，完整清单�
 
 审计最多保留本实例最近 2,000 条，仅向对应服务器的管理员展示，不包含密码、令牌或请求正文；不是不可篡改审计。一个数据目录只允许一个进程持有，不支持多个副本共享调度。
 
+## 1.3：身份、房间与桥接用户
+
+- 右上角显示当前管理员的真实头像和显示名称；侧栏与概览顶部显示上游 Tuwunel 的实际版本，区别于面板版本。
+- 用户详情 → 加入房间：保留房间 ID，同时显示名称、头像及成员数。每页 20 个房间，最多 8 个并行详情请求；无法读取资料的房间仍保留 ID 和错误说明。
+- 用户管理默认显示普通用户；桥接用户在独立分类中，可按 Signal、Telegram、名称、状态筛选。
+- 默认按 `@signal_<UUID>:server`、`@telegram_<数字>:server` 识别。Tuwunel 的管理员用户 API 不提供 appservice 归属信息，所以此处是 **ID 格式匹配**，不是上游归属证明；清理前必须核对预览。
+
+自定义桥接 / bot 可在管理面板的 TOML 中添加服务器隔离的规则。前缀必须从 `@` 开始，是普通文本，**不是正则或通配符**；设置为尽量具体的前缀。规则只对指定的完整 Matrix HTTP 地址生效：
+
+```toml
+[bridges]
+detect_common = true
+
+[[bridges.rules]]
+homeserver = "https://matrix.example.com"
+name = "Telegram bot"
+user_prefix = "@telegrambot"
+```
+
+桥接清理支持所选账号或当前筛选的全部账号，每批最多 10,000 个。预览包含具体 ID、匹配依据和清理范围，有效期 10 分钟；输入准确确认文字后才能开始。后台先重新验证管理员和目标账号，再停用并 `erase=true`，循环从第 0 页删除该用户上传的本地媒体及缩略图，最后核实资料、设备、加入房间、账户数据及媒体是否清空。管理员、系统账号、远程账号及未匹配桥接规则的账号不能被清理。部分失败会保留结果，可重新预览未完成目标。
+
+**这是 Tuwunel 管理 API 范围内的账号与媒体清理，不是底层数据库的物理删库。** 用户 ID、历史事件、密钥备份等没有对应管理员删除接口的数据、共享房间、其他服务器上的副本、桥接程序自己的数据库，以及无法归属到该用户的远程媒体缓存，不会被此流程删除。请先停止对应桥接，避免其继续创建用户或媒体。退出管理面板会中断后续清理；进程重启会把任务标为中断，不自动重放删除。任务记录不保存登录凭据，按服务器隔离，最多保留 20 个任务。
+
+目录按完整分页数据分类后再分页，避免在一页中过滤导致漏人。缓存 30 秒、最多 4 个服务器；手动刷新或发起清理预览会重新读取。超过 50,000 个账号时明确报错，不以部分结果冒充完整清单。
+
+![桥接用户分类](docs/bridges-v13.jpg)
+![管理员头像与房间资料](docs/rooms-v13.jpg)
+
+## 配置文件注册令牌
+
+`M_FORBIDDEN: Tokens set in the config file can't be updated` 是 Tuwunel 对配置令牌的限制。由 Tuwunel 的 `registration_token` 或 `registration_token_file` 定义的令牌，不能通过管理 API 修改或删除。请修改 **Tuwunel 自身的配置/令牌文件**并重启；需要次数或过期限制时，在面板创建新的数据库令牌。
+
+上游列表没有来源字段，未使用且无限制的数据库令牌与配置令牌无法仅从列表区分。本面板不会把“无限次”误判为配置令牌：首次收到明确的配置拒绝后，会显示中文说明，并记住只读状态，后续列表禁用编辑和删除。持久化标记只保存服务器和令牌摘要，不保存令牌明文。
+
+## 构建、发布与自动清理
+
+```bash
+# 完成检查后发布 AMD64 / ARM64；需预先 docker login
+npm run check
+python3 scripts/release.py --version 1.3
+
+# 仅预览将清理的旧镜像
+python3 scripts/release.py --version 1.3 --cleanup-only --dry-run
+```
+
+发布脚本使用本次构建专属的临时 BuildKit 构建器。推送并核验镜像后拉取 `:1.0` 与 `:1.3`，删除带有本项目来源标签的旧本地镜像；保留当前版本、任何容器引用的镜像以及带有其他项目标签的镜像。无论构建成功或失败，退出时均移除本次专用构建器及其缓存卷。不会执行全局 `docker system prune`，不会删除数据卷或远端历史镜像。
+
+以前在共享构建器留下的缓存，可追加 `--legacy-builder desktop-linux`；只清理描述明确包含 `tuwunel-admin` 且未被使用的记录，不推测其他缓存的归属。GitHub 发布工作流使用同一脚本。
+
+## 从 Rust 1.2 升级
+
+保留原 TOML 和数据卷即可；桥接默认规则无需新增配置。`utoptop/tuwunel-admin:1.0` 同步更新，固定版本可使用 `:1.3`。执行 `docker compose pull && docker compose up -d`。旧 `:1.2` 仍在远端保留，本地未使用副本可由发布清理脚本移除。
+
 ## 从 Rust 1.1 升级
 
-原 TOML 的 `matrix.locked` 语义保持不变；不需要新增字段也可启动。网页锁定偏好会自动清除，部署配置是唯一依据。使用认证跳转前设置公开 HTTPS URL 和 Cookie，检查回调允许规则。继续使用原数据卷；更新镜像后运行 `docker compose up -d`。原 `:1.1` 镜像保持原版本，当前更新发布为 `:1.2` 并更新约定的 `:1.0`。
+原 TOML 的 `matrix.locked` 语义保持不变；不需要新增字段也可启动。网页锁定偏好会自动清除，部署配置是唯一依据。使用认证跳转前设置公开 HTTPS URL 和 Cookie，检查回调允许规则。继续使用原数据卷；更新镜像后运行 `docker compose up -d`。原 `:1.1` 镜像保持原版本，当前更新发布为 `:1.3` 并更新约定的 `:1.0`。
 
 ## 从 Node 1.0 升级
 
@@ -245,7 +298,7 @@ cargo fmt --all -- --check
 
 真实联调使用独立临时 Tuwunel，操作流程见 [docs/TESTING.md](docs/TESTING.md)。生产运行目录只需 Rust 二进制、`dist/`、配置文件和可写数据目录。
 
-CI 验证 Rust、前端与 Docker 构建。发布工作流需要 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` Actions Secrets；发布 `:1.0` 和 `:1.2` 双架构镜像。GitHub 密钥不能替代 Docker Hub 凭据。
+CI 验证 Rust、前端与 Docker 构建。发布工作流需要 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` Actions Secrets；发布 `:1.0` 和 `:1.3` 双架构镜像。GitHub 密钥不能替代 Docker Hub 凭据。
 
 ## 排错
 

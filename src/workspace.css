@@ -1205,3 +1205,212 @@ footer {
     min-height: 100dvh;
   }
 }
+
+/* Identity, bridge maintenance and room context */
+.topbar-right > .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex: 0 0 32px;
+  font-size: 12px;
+}
+.workspace small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.server-version {
+  display: block;
+  color: var(--muted);
+  margin-top: 7px;
+}
+.directory-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.directory-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 11px 16px;
+  color: #697775;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.directory-tabs button.active {
+  background: #e2ede8;
+  border-color: #cbdcd4;
+  color: #315d52;
+}
+.directory-tabs button span {
+  font-size: 11px;
+  border-radius: 12px;
+  background: #fff9;
+  padding: 2px 7px;
+}
+.bridge-tools {
+  padding: 17px 20px;
+  margin-bottom: 20px;
+  border: 1px solid #dce4df;
+  border-radius: 12px;
+  background: #f9fbf9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.bridge-tools p {
+  margin: 0;
+  font-size: 12px;
+  color: #61736c;
+  flex: 1 1 300px;
+  line-height: 1.8;
+}
+.user-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.user-select-row input,
+th input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #527c70;
+  flex: 0 0 16px;
+}
+.user-room-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 0;
+  border-bottom: 1px solid #edf0ee;
+  min-width: 0;
+}
+.user-room-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.user-room-row code,
+.user-room-row small {
+  display: block;
+  font-size: 11px;
+  color: #788680;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.user-room-row .room-error {
+  color: #a45750;
+}
+.user-room-row strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.cleanup-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #99523d;
+  padding: 18px;
+  border-radius: 10px;
+  background: #fbf2ed;
+}
+.cleanup-summary p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.cleanup-limits {
+  line-height: 1.9;
+}
+.cleanup-confirm {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 20px;
+}
+.cleanup-confirm input {
+  padding: 12px;
+  width: 100%;
+  border: 1px solid #d8e1dc;
+  border-radius: 8px;
+  font: inherit;
+}
+.cleanup-targets {
+  max-height: 330px;
+  overflow-y: auto;
+}
+.cleanup-jobs {
+  padding: 0 22px;
+}
+.cleanup-job {
+  padding: 18px 0;
+  border-bottom: 1px solid #edf0ee;
+}
+.cleanup-job summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+}
+.cleanup-job summary > span:nth-child(2) {
+  flex: 1;
+}
+.cleanup-job strong {
+  display: block;
+  font-size: 13px;
+}
+.cleanup-job small {
+  display: block;
+  font-size: 11px;
+  color: #7a8580;
+  margin-top: 5px;
+}
+.cleanup-job-icon {
+  color: #658779;
+}
+.cleanup-results {
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 14px 0;
+}
+.cleanup-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  font-size: 12px;
+  border-top: 1px solid #eef1ef;
+}
+.cleanup-result code {
+  overflow-wrap: anywhere;
+}
+.token-notice {
+  margin-bottom: 20px;
+  line-height: 1.9;
+}
+@media (max-width: 600px) {
+  .bridge-tools .actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  .user-room-row {
+    flex-wrap: wrap;
+  }
+  .cleanup-summary {
+    align-items: flex-start;
+  }
+  .cleanup-summary svg {
+    flex-shrink: 0;
+  }
+  .directory-tabs button {
+    padding: 10px;
+    font-size: 12px;
+  }
+}

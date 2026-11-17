@@ -28,6 +28,7 @@ login_attempts = ${options.loginAttempts || 10}
 [scheduler]
 enabled = ${options.scheduler || false}
 poll_seconds = 1
+${options.extraConfig || ""}
 `;
   await writeFile(config, text);
   const child = spawn(

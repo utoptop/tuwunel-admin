@@ -43,3 +43,12 @@ max_response_bytes = 8388608
 [scheduler]
 enabled = true
 poll_seconds = 60
+
+[bridges]
+# 自动识别 @signal_<UUID> 和 @telegram_<数字>，仅用于分类，清理仍需预览并确认。
+detect_common = true
+# 其他桥接或自定义 bot 前缀按精确服务器隔离；无需填写桥接的密钥。
+# [[bridges.rules]]
+# homeserver = "https://matrix.example.com"
+# name = "Telegram bot"
+# user_prefix = "@telegrambot"

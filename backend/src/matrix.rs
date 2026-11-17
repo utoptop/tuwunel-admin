@@ -254,7 +254,7 @@ pub fn safe_client(config: &Config, url: &Url, trusted: bool) -> Result<Client> 
         .timeout(Duration::from_secs(config.limits.request_timeout_seconds))
         .connect_timeout(Duration::from_secs(10))
         .pool_max_idle_per_host(8)
-        .user_agent("Tuwunel-Admin/1.2");
+        .user_agent("Tuwunel-Admin/1.3");
     if !trusted {
         builder = builder.dns_resolver(Arc::new(PublicDns));
     }

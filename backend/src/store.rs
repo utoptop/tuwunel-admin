@@ -36,6 +36,10 @@ pub struct Data {
     pub policies: BTreeMap<String, Policy>,
     #[serde(default)]
     pub oauth_clients: BTreeMap<String, String>,
+    #[serde(default)]
+    pub readonly_tokens: BTreeMap<String, String>,
+    #[serde(default)]
+    pub cleanup_jobs: BTreeMap<String, Value>,
     pub audit: Vec<Value>,
 }
 pub struct Store {
@@ -154,12 +158,21 @@ impl Store {
                 ..Data::default()
             }
         };
-        let store = Self {
+        let mut store = Self {
             data,
             path,
             key,
             _lock: lock,
         };
+        for job in store.data.cleanup_jobs.values_mut() {
+            if job["status"] == "running" {
+                job["status"] = json!("interrupted");
+                job["message"] = json!(
+                    "管理进程已重启；请核对逐项结果后重新预览未完成的用户。不会自动重放删除。 "
+                );
+                migration = true;
+            }
+        }
         if migration {
             store.save()?;
         }

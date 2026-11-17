@@ -17,6 +17,7 @@ pub struct Config {
     pub limits: Limits,
     pub scheduler: Scheduler,
     pub auth: AuthConfig,
+    pub bridges: crate::bridges::BridgeConfig,
 }
 #[derive(Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -134,6 +135,7 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&mut self) -> Result<()> {
+        self.bridges.validate()?;
         self.server.public_url = normalize(&self.server.public_url)?;
         if self.server.public_url.starts_with("https:") && !self.server.cookie_secure {
             return Err(AppError::new(

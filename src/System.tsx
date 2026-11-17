@@ -96,6 +96,11 @@ export function TokensPage({ operate }: { operate: Operate }) {
           创建令牌
         </Button>
       </PageTitle>
+      <div className="notice token-notice">
+        配置文件令牌由 Tuwunel 的 registration_token / registration_token_file
+        管理，不能通过 API
+        修改或删除。需要次数或有效期限制时，请创建新令牌。上游未返回来源字段；收到明确的配置令牌拒绝后，面板会记住并标为只读。
+      </div>
       <Panel title="令牌列表" action={<Refresh onClick={result.reload} />}>
         <ErrorBox error={result.error} />
         {result.loading ? (
@@ -108,6 +113,7 @@ export function TokensPage({ operate }: { operate: Operate }) {
               <thead>
                 <tr>
                   <th>令牌</th>
+                  <th>来源</th>
                   <th>已用 / 上限</th>
                   <th>待完成</th>
                   <th>有效期</th>
@@ -121,6 +127,15 @@ export function TokensPage({ operate }: { operate: Operate }) {
                       <code>{t.token}</code>
                     </td>
                     <td>
+                      <Badge tone={t.read_only ? "amber" : ""}>
+                        {t.read_only
+                          ? "配置文件 · 只读"
+                          : t.source === "database"
+                            ? "数据库"
+                            : "API 未标明"}
+                      </Badge>
+                    </td>
+                    <td>
                       {t.completed} / {t.uses_allowed ?? "不限"}
                     </td>
                     <td>{t.pending}</td>
@@ -129,18 +144,30 @@ export function TokensPage({ operate }: { operate: Operate }) {
                       <div className="actions">
                         <Button
                           kind="text"
+                          disabled={t.read_only}
+                          title={
+                            t.read_only
+                              ? "请在 Tuwunel 配置文件中修改"
+                              : "编辑令牌"
+                          }
                           onClick={() =>
                             operate({
                               title: "编辑注册令牌",
                               fields: fields(t),
-                              run: (v) =>
-                                admin(
-                                  "saveToken",
-                                  { token: t.token },
-                                  {},
-                                  body(v),
-                                  true,
-                                ),
+                              run: async (v) => {
+                                try {
+                                  return await admin(
+                                    "saveToken",
+                                    { token: t.token },
+                                    {},
+                                    body(v),
+                                    true,
+                                  );
+                                } catch (e) {
+                                  result.reload();
+                                  throw e;
+                                }
+                              },
                               onDone: result.reload,
                             })
                           }
@@ -149,20 +176,32 @@ export function TokensPage({ operate }: { operate: Operate }) {
                         </Button>
                         <Button
                           kind="danger-soft"
+                          disabled={t.read_only}
+                          title={
+                            t.read_only
+                              ? "请从 Tuwunel 配置文件移除此令牌并重启"
+                              : "删除令牌"
+                          }
                           onClick={() =>
                             operate({
                               title: "删除注册令牌",
                               description:
                                 "使用此令牌的新注册将被拒绝。已注册账号不受影响。",
                               danger: true,
-                              run: () =>
-                                admin(
-                                  "deleteToken",
-                                  { token: t.token },
-                                  {},
-                                  {},
-                                  true,
-                                ),
+                              run: async () => {
+                                try {
+                                  return await admin(
+                                    "deleteToken",
+                                    { token: t.token },
+                                    {},
+                                    {},
+                                    true,
+                                  );
+                                } catch (e) {
+                                  result.reload();
+                                  throw e;
+                                }
+                              },
                               onDone: result.reload,
                             })
                           }
