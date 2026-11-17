@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 LABEL org.opencontainers.image.title="Tuwunel Admin" \
       org.opencontainers.image.description="Rust-powered Matrix Tuwunel administration console" \
-      org.opencontainers.image.version="1.1.0" \
+      org.opencontainers.image.version="1.2.0" \
       org.opencontainers.image.source="https://github.com/utoptop/tuwunel-admin" \
       org.opencontainers.image.licenses="MIT"
 WORKDIR /app

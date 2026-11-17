@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Avatar from "./Avatar";
 import {
   ArrowUpRight,
   ChevronRight,
@@ -117,7 +118,7 @@ export function UsersPage({
       <PageTitle
         eyebrow="IDENTITY & ACCESS"
         title="用户管理"
-        description="管理本地账号、访问权限与设备，连接每一位成员。"
+        description="管理成员资料、访问权限和登录设备。"
       >
         <Button kind="primary" onClick={create}>
           <Plus size={17} />
@@ -125,6 +126,17 @@ export function UsersPage({
         </Button>
       </PageTitle>
       <Panel>
+        <div className="table-heading">
+          <div>
+            <h2>成员目录</h2>
+            <p>当前服务器上的用户与访问权限</p>
+          </div>
+          <Badge>
+            {result.data?.total === undefined
+              ? "正在读取"
+              : `${result.data.total} 位用户`}
+          </Badge>
+        </div>
         <div className="toolbar">
           <form
             className="search"
@@ -182,11 +194,11 @@ export function UsersPage({
                         className="identity"
                         onClick={() => setSelected(u.name)}
                       >
-                        <span className="avatar">
-                          {(u.displayname || u.name.slice(1))
-                            .slice(0, 1)
-                            .toUpperCase()}
-                        </span>
+                        <Avatar
+                          name={u.displayname || u.name}
+                          mxc={u.avatar_url}
+                          homeserver={session.homeserver}
+                        />
                         <span>
                           <strong>
                             {u.displayname || u.name.split(":")[0].slice(1)}
@@ -290,9 +302,12 @@ function UserDetail({
     <Modal title="用户详情" wide onClose={onClose}>
       <div className="modal-body">
         <div className="detail-heading">
-          <span className="avatar large">
-            {(u.displayname || id.slice(1)).slice(0, 1).toUpperCase()}
-          </span>
+          <Avatar
+            name={u.displayname || id}
+            mxc={u.avatar_url}
+            homeserver={session.homeserver}
+            large
+          />
           <div>
             <h2>{u.displayname || id.split(":")[0].slice(1)}</h2>
             <code>{id}</code>

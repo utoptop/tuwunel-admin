@@ -1,17 +1,15 @@
 import { useEffect, useState } from "react";
+import Brand from "./Brand";
+import Login from "./Login";
 import {
   Activity,
-  ArrowRight,
-  ChevronDown,
   Code2,
   ExternalLink,
   Globe2,
   HardDrive,
   KeyRound,
-  LockKeyhole,
   LayoutDashboard,
   LayoutGrid,
-  LoaderCircle,
   LogOut,
   Menu,
   ShieldCheck,
@@ -26,7 +24,6 @@ import {
   Button,
   ErrorBox,
   Loading,
-  useLoad,
   type Operation,
 } from "./ui";
 import Dashboard from "./Dashboard";
@@ -50,19 +47,6 @@ const pages = [
   ["audit", "操作审计", Activity],
   ["api", "高级 API", Code2],
 ] as const;
-function Brand() {
-  return (
-    <div className="brand">
-      <img src="/favicon.svg" alt="" />
-      <div>
-        <strong>
-          tuwunel<span>admin</span>
-        </strong>
-        <small>MATRIX CONTROL CENTER</small>
-      </div>
-    </div>
-  );
-}
 export default function App() {
   const [session, saveSession] = useState<Session | null>(null),
     [initial, setInitial] = useState(true),
@@ -74,6 +58,9 @@ export default function App() {
     saveSession(s);
     setOperation(null);
   };
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [page, session?.homeserver]);
   useEffect(() => {
     request("/session")
       .then(login)
@@ -121,10 +108,10 @@ export default function App() {
             <strong>{new URL(session.homeserver).host}</strong>
             <small>
               <span className="dot" />
-              管理工作区
+              当前服务器
             </small>
           </div>
-          <ChevronDown size={14} />
+          <ShieldCheck size={14} />
         </div>
         <div className="nav-label">工作区</div>
         <nav>
@@ -153,7 +140,7 @@ export default function App() {
           </a>
           <div className="version">
             <span>tuwunel admin</span>
-            <Badge>v1.1</Badge>
+            <Badge>v1.2</Badge>
           </div>
         </div>
       </aside>
@@ -167,7 +154,7 @@ export default function App() {
             >
               {menu ? <X size={20} /> : <Menu size={20} />}
             </Button>
-            <span>工作区</span>
+            <span>管理控制台</span>
             <span className="slash">/</span>
             <strong>
               {pages.find(([key]) => key === page)?.[1] || "服务器概览"}
@@ -223,7 +210,7 @@ export default function App() {
           )}
           <footer>
             <span>Tuwunel Admin</span>
-            <span>让沟通自由，让管理有序。</span>
+            <span>开放连接，自主管理。</span>
           </footer>
         </main>
       </div>
@@ -234,287 +221,6 @@ export default function App() {
           onClose={() => setOperation(null)}
         />
       )}
-    </div>
-  );
-}
-function Login({ onLogin }: { onLogin: (s: Session) => void }) {
-  const config = useLoad(() => request("/config"));
-  const [homeserver, setHomeserver] = useState("");
-  const [pinned, setPinned] = useState(false);
-  useEffect(() => {
-    if (!config.data) return;
-    let saved = "";
-    try {
-      saved = localStorage.getItem("tuwunel-admin.pinned-server") || "";
-    } catch {
-      /* Storage may be disabled. */
-    }
-    const allowed = config.data.allowedHomeservers || [];
-    if (
-      config.data.locked ||
-      (saved &&
-        allowed.length &&
-        !allowed.includes(saved) &&
-        saved !== config.data.homeserver)
-    )
-      saved = "";
-    setHomeserver(saved || config.data.homeserver || "");
-    setPinned(Boolean(saved));
-  }, [config.data]);
-  const [mode, setMode] = useState("password"),
-    [username, setUsername] = useState(""),
-    [password, setPassword] = useState(""),
-    [token, setToken] = useState(""),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  return (
-    <div className="login-shell">
-      <div className="login-story">
-        <Brand />
-        <div className="login-intro">
-          <div className="eyebrow">BUILT FOR YOUR MATRIX</div>
-          <h1>
-            你的服务器，
-            <br />
-            尽在掌握。
-          </h1>
-          <p>
-            从每一位用户到每一个房间，
-            <br />
-            一个安静、高效的 Tuwunel 管理空间。
-          </p>
-          <div className="login-visual">
-            <div className="login-orbit" />
-            <div className="visual-window">
-              <div className="window-dots">
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className="visual-title">
-                <ShieldCheck size={24} />
-                <span>连接 · 管理 · 守护</span>
-              </div>
-              <div className="visual-lines">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="visual-icons">
-                <Users />
-                <LayoutGrid />
-                <HardDrive />
-              </div>
-            </div>
-            <span className="floating-lock">
-              <ShieldCheck size={30} />
-            </span>
-          </div>
-        </div>
-        <span className="login-copyright">TUWUNEL ADMIN · OPEN SOURCE</span>
-      </div>
-      <div className="login-form-side">
-        <div className="login-form">
-          <span className="login-mark">
-            <ShieldCheck size={27} />
-          </span>
-          <h2>登录管理中心</h2>
-          <p>使用 Matrix 服务器管理员账号继续</p>
-          <label className="field server-field">
-            <span>
-              Matrix 服务器地址{" "}
-              {config.data?.locked && (
-                <Badge tone="purple">
-                  <LockKeyhole size={11} />
-                  部署配置已锁定
-                </Badge>
-              )}
-            </span>
-            <div
-              className={`server-input ${config.data?.locked || pinned ? "locked" : ""}`}
-            >
-              {config.data?.locked || pinned ? (
-                <LockKeyhole size={17} />
-              ) : (
-                <Globe2 size={17} />
-              )}
-              <input
-                aria-label="Matrix 服务器地址"
-                type="url"
-                value={homeserver}
-                readOnly={Boolean(config.data?.locked || pinned)}
-                placeholder="https://matrix.example.com"
-                autoComplete="url"
-                list="allowed-servers"
-                onChange={(e) => {
-                  setHomeserver(e.target.value);
-                  setError("");
-                }}
-              />
-            </div>
-            <datalist id="allowed-servers">
-              {config.data?.allowedHomeservers?.map((server: string) => (
-                <option key={server} value={server} />
-              ))}
-            </datalist>
-            <small>
-              {config.data?.locked
-                ? "此部署只允许连接上方服务器，地址由配置文件管理。"
-                : "输入完整的服务器地址。未在部署配置中列出的地址仅支持公网 HTTPS。"}
-            </small>
-          </label>
-          {!config.data?.locked && (
-            <label className="field check-field server-pin">
-              <input
-                type="checkbox"
-                checked={pinned}
-                disabled={!homeserver.trim()}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  try {
-                    if (checked) {
-                      const url = new URL(homeserver.trim());
-                      if (
-                        !["https:", "http:"].includes(url.protocol) ||
-                        url.username ||
-                        url.password ||
-                        url.pathname !== "/" ||
-                        url.search ||
-                        url.hash
-                      )
-                        throw new Error("请输入不含路径或凭据的完整服务器地址");
-                      localStorage.setItem(
-                        "tuwunel-admin.pinned-server",
-                        url.origin,
-                      );
-                      setHomeserver(url.origin);
-                    } else
-                      localStorage.removeItem("tuwunel-admin.pinned-server");
-                    setPinned(checked);
-                    setError("");
-                  } catch (e) {
-                    setError((e as Error).message || "无法保存服务器地址");
-                  }
-                }}
-              />
-              <span>记住并锁定此地址（当前浏览器）</span>
-            </label>
-          )}
-          <div className="tabs">
-            <button
-              className={mode === "password" ? "active" : ""}
-              onClick={() => setMode("password")}
-            >
-              账号密码
-            </button>
-            <button
-              className={mode === "token" ? "active" : ""}
-              onClick={() => setMode("token")}
-            >
-              Access Token
-            </button>
-          </div>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError("");
-              try {
-                const s = await request(
-                  "/login",
-                  "POST",
-                  mode === "password"
-                    ? { username, password, homeserver }
-                    : { accessToken: token, homeserver },
-                );
-                setPassword("");
-                setToken("");
-                onLogin(s);
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {mode === "password" ? (
-              <>
-                <label className="field">
-                  <span>管理员账号</span>
-                  <input
-                    required
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="@admin:example.com"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="field">
-                  <span>密码</span>
-                  <input
-                    required
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="输入账号密码"
-                    autoComplete="current-password"
-                  />
-                </label>
-              </>
-            ) : (
-              <label className="field">
-                <span>管理员访问令牌</span>
-                <input
-                  required
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="粘贴 Matrix Access Token"
-                  autoComplete="off"
-                />
-                <small>
-                  适用于 SSO / MAS 登录；从已有 Matrix 客户端获取令牌。
-                </small>
-              </label>
-            )}
-            <ErrorBox error={error || config.error} />
-            {config.data && !config.data.configured && (
-              <p className="notice">
-                请在 config.toml 中设置 matrix.homeserver，或关闭 matrix.locked
-                以允许输入服务器地址。
-              </p>
-            )}
-            <Button
-              kind="primary login-submit"
-              type="submit"
-              disabled={busy || !config.data?.configured || !homeserver.trim()}
-            >
-              {busy ? (
-                <LoaderCircle size={17} className="spin" />
-              ) : (
-                <>
-                  进入管理中心
-                  <ArrowRight size={17} />
-                </>
-              )}
-            </Button>
-          </form>
-          <div className="login-security">
-            <ShieldCheck size={15} />
-            <span>凭据由服务端保管，不存入浏览器本地存储。</span>
-          </div>
-          <a
-            className="login-docs"
-            href="https://matrix-construct.github.io/tuwunel/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Tuwunel 官方文档
-            <ExternalLink size={13} />
-          </a>
-        </div>
-        <div className="login-version">Tuwunel Admin 1.1.0</div>
-      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@ name: Publish Docker image
 on:
   workflow_dispatch:
   push:
-    tags: ['v1.1', 'v1.1.*']
+    tags: ['v1.2', 'v1.2.*']
 permissions:
   contents: read
 jobs:
@@ -30,5 +30,5 @@ jobs:
           push: true
           tags: |
             utoptop/tuwunel-admin:1.0
-            utoptop/tuwunel-admin:1.1
+            utoptop/tuwunel-admin:1.2
           provenance: mode=max

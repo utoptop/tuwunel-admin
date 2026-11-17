@@ -7,13 +7,25 @@ cookie_secure = false # HTTPS 部署请改为 true
 static_dir = "./dist"
 
 [matrix]
-# locked=true：登录页只读，后端强制只能连接 homeserver。
-# locked=false：登录页允许自定义输入；homeserver 作为默认值，可以留空。
+# 部署者在此决定固定服务器或开放自定义地址；网页不提供锁定开关。
+# locked=true：只显示固定服务器，后端强制只能连接 homeserver。
+# locked=false：允许使用面板的人输入自己的服务器；homeserver 可作为默认值。
 locked = false
 homeserver = ""
 # 非空时只允许这些地址及上面的默认地址；空列表允许任意公网 HTTPS。
 # 显式列入的地址或默认地址可使用内网 HTTP，例如 http://tuwunel:8008。
 allowed_homeservers = []
+
+[auth]
+# 默认自动检测密码 / SSO / OAuth。HTTPS auth 地址通过公网 DNS 防护验证。
+# 独立内网认证服务的精确 origin 要在这里明确允许；这不增加可登录的 Matrix 服务器。
+allowed_origins = []
+# OAuth 默认使用自动注册的公共 PKCE 客户端，客户端 ID 会保存在数据卷。
+# 若服务器关闭动态注册，可配置预注册的公共客户端（token_endpoint_auth_method=none）。
+# 回调地址必须是 <server.public_url>/api/auth/callback。
+# [[auth.clients]]
+# issuer = "https://auth.example.com/"
+# client_id = "your-public-client-id"
 
 [storage]
 data_dir = "./data"

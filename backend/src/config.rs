@@ -16,6 +16,19 @@ pub struct Config {
     pub storage: Storage,
     pub limits: Limits,
     pub scheduler: Scheduler,
+    pub auth: AuthConfig,
+}
+#[derive(Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthConfig {
+    pub allowed_origins: Vec<String>,
+    pub clients: Vec<AuthClient>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthClient {
+    pub issuer: String,
+    pub client_id: String,
 }
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -139,6 +152,23 @@ impl Config {
         }
         for server in &mut self.matrix.allowed_homeservers {
             *server = normalize(server)?;
+        }
+        for origin in &mut self.auth.allowed_origins {
+            *origin = normalize(origin)?;
+        }
+        for client in &self.auth.clients {
+            let url = url::Url::parse(&client.issuer)
+                .map_err(|_| AppError::new(500, "auth.clients 的 issuer 无效"))?;
+            if !matches!(url.scheme(), "http" | "https")
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || client.client_id.is_empty()
+                || client.client_id.len() > 1024
+            {
+                return Err(AppError::new(500, "auth.clients 配置无效"));
+            }
         }
         if !(1..=168).contains(&self.limits.session_hours)
             || !(1..=10000).contains(&self.limits.login_attempts)

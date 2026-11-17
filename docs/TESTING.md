@@ -2,17 +2,25 @@
 
 ## 自动化测试
 
-Rust 1.1.0 的 `npm test` 包含 **5 项 Rust 测试 + 13 项 HTTP 集成测试**。HTTP 测试启动实际编译后的 Rust 二进制，连接隔离的本地 Matrix 模拟服务，不是对旧 Node 服务器进行测试。
+Rust 1.2.0 的 `npm test` 包含 **5 项 Rust 测试 + 24 项 HTTP 集成测试**。HTTP 测试启动实际编译后的 Rust 二进制，连接隔离的本地 Matrix 模拟服务，不是对旧 Node 服务器进行测试。
 
 覆盖管理员与非管理员登录、Cookie、Origin/CSRF、白名单与路径编码、请求大小、写操作确认、上游不支持错误、计划凭据加密与重载、清理参数、部分失败、权限撤销、退出及登录限速。
 
-本次新增验证：
+配置与原有功能验证：
 
 - TOML 未知字段、无效范围、HTTPS Cookie 配置；部署锁定在后端强制执行。
 - 自定义地址与允许列表，私网/IP 映射、DNS 内网解析及重定向防护。
 - 两个服务器返回相同 Matrix ID 时，审计、媒体策略、令牌仍然隔离。
 - 原 Node AES-GCM 密文可解密，旧数据自动备份并迁移；同一数据目录不能被两个进程占用。
 - Rust 进程重启后，自动任务无需浏览器会话即可继续运行。
+
+认证与头像新增验证：
+
+- 根据服务端能力识别密码、SSO、OAuth；固定地址规则同样作用于发现和认证发起接口。
+- SSO 浏览器绑定、一次性 state、错误浏览器/回调重放拒绝、普通用户拒绝及上游退出。
+- OAuth 动态注册、PKCE S256 交换、issuer 不匹配、取消、并发续期互斥、刷新令牌轮换、撤销及续期失败。
+- 注册客户端 ID 重启复用，预注册公共客户端，以及独立内网 Auth 的显式允许规则。
+- 头像必须使用当前会话：认证缩略图、旧端点回退、跨服务器请求拒绝、SVG/HTML/超大响应和重定向防护。
 
 `npm run build` 执行 TypeScript 检查和 Vite 生产构建。Docker 镜像有独立的生产构建与健康检查。
 
@@ -44,7 +52,8 @@ docker stop tuwunel-admin-integration
 
 真实验证覆盖：
 
-- 管理员密码登录与退出，服务器版本查询。
+- 自动检测密码登录、管理员登录与退出，服务器版本查询。
+- 真实 PNG 头像上传、修改用户头像、用户列表返回头像地址、通过当前会话读取缩略图。
 - 用户创建、搜索、详情、密码重置后真实登录、锁定/解锁、暂停/恢复及原生 Matrix 管理端点。
 - 设备创建、列表、改名、删除。
 - 房间创建、管理员加入成员、用户加入房间列表、成员、状态与事件查询。
@@ -57,13 +66,40 @@ docker stop tuwunel-admin-integration
 
 Rust 版本在同一官方镜像上重新完成上述真实联调。脚本中的 Tuwunel 环境变量仅用于配置独立的上游测试容器，管理系统本身只使用临时 TOML 文件。
 
-浏览器验证：原版已验证用户列表、房间详情、生命周期表单和高级 API；Rust 版重新验证自定义地址输入、浏览器锁定/取消锁定、刷新后记住地址、真实管理员登录/退出、部署锁定只读输入。桌面和 390px 手机宽度均无横向溢出，浏览器没有控制台警告或错误。截图展示的是独立测试服务器。
+浏览器验证：固定模式仅显示服务器信息；开放模式可输入地址，清空地址会移除旧登录方式；密码模式仅提供账号密码，SSO 模式不出现密码框。使用本地模拟身份提供商完成浏览器跳转和认证回跳。真实 Tuwunel 用户列表与详情中的头像成功读取，桌面及 390px 手机布局没有页面横向溢出，表格在自己的容器内横向滚动，控制台没有警告或错误。
 
-![部署锁定登录页](login-locked.jpg)
+截图中的账号和头像来自专用测试服务器，不是生产用户。认证页截图使用本地模拟 SSO 服务。
 
-## 本地性能对比
+![用户管理与头像](users-v12.jpg)
 
-2026-11-17，Apple M4 / macOS arm64，Node 25.9.0 对比 Rust 1.93.1 `--release`。基线为原 Node 版提交 `7f243d147761cb59c89b161d1201623ad852b2d3`。两个后端分别在独立进程运行，同一台机器上的 Node HTTP 模拟上游返回相同的空用户列表。客户端复用连接，32 并发，每轮每项 5,000 请求，3 轮交替顺序，取吞吐中位数。
+## 真实 Tuwunel OAuth 联调
+
+另启动一个完全独立的 `matrix.test` 临时实例，启用 Tuwunel 原生 OAuth：
+
+```bash
+docker run -d --rm --name tuwunel-admin-oidc-integration \
+  -p 127.0.0.1:18009:8008 \
+  -e TUWUNEL_SERVER_NAME=matrix.test \
+  -e TUWUNEL_ALLOW_REGISTRATION=true \
+  -e TUWUNEL_REGISTRATION_TOKEN=local-integration-only \
+  -e TUWUNEL_ALLOW_FEDERATION=false \
+  -e TUWUNEL_ADDRESS=0.0.0.0 \
+  -e TUWUNEL_WELL_KNOWN__CLIENT=http://127.0.0.1:18009 \
+  -e TUWUNEL_AUTHENTICATION__OIDC__NATIVE_AUTH=true \
+  jevolk/tuwunel:main
+
+cargo build
+node tests/real-oidc-smoke.mjs
+docker stop tuwunel-admin-oidc-integration
+```
+
+该协议级测试通过真实 Tuwunel 完成：元数据发现、公共客户端动态注册、原生账号认证、同意授权、HTML 回跳、PKCE 授权码兑换、管理员身份确认、用 OAuth Token 调用管理 API，以及退出后核实上游设备会话被撤销。
+
+测试使用 `https://admin.example.com` 作为注册的回调 origin，HTTP 测试驱动截获回调并转交给本地 Rust 服务，不访问这个域名。这个测试验证协议，不验证部署域名的 TLS。正式部署仍需真实 HTTPS 域名与正确的反向代理、Cookie 和回调配置。短时间内反复运行可能触发 Tuwunel 的认证限速，应等待返回的重试时间。
+
+## 1.1 版本的历史性能对比
+
+2026-11-17，Apple M4 / macOS arm64，Node 25.9.0 对比 1.1.0 管理后端的 Rust 1.93.1 `--release`。基线为原 Node 版提交 `7f243d147761cb59c89b161d1201623ad852b2d3`。两个后端分别在独立进程运行，同一台机器上的 Node HTTP 模拟上游返回相同的空用户列表。客户端复用连接，32 并发，每轮每项 5,000 请求，3 轮交替顺序，取吞吐中位数。
 
 | 项目 | 原 Node 后端 | Rust 后端 |
 | --- | ---: | ---: |
@@ -85,4 +121,4 @@ node scripts/benchmark.mjs "$baseline_dir"
 
 脚本自动关闭测试服务并清理自己创建的临时数据目录；保留上面的基线目录供复核。原始测量见 [benchmark-rust.json](benchmark-rust.json)。
 
-未进行生产负载测试、外部 SSO/MAS 实机测试、跨服务器联邦故障恢复、远程媒体实际重新下载或所有高级 API 的逐个破坏性测试。高级操作基于官方路由/类型定义映射，最终行为由目标服务器决定。
+上述历史性能数据不代表 1.2 的认证、头像或生产负载性能。未进行生产负载测试、外部商业 SSO/MAS 实例端到端测试、跨服务器联邦故障恢复、远程媒体实际重新下载或所有高级 API 的逐个破坏性测试。高级操作基于官方路由/类型定义映射，最终行为由目标服务器决定。

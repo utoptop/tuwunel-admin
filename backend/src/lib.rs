@@ -1,4 +1,6 @@
 pub mod app;
+pub mod authentication;
+pub mod avatar;
 pub mod catalog;
 pub mod config;
 pub mod error;

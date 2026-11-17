@@ -18,6 +18,9 @@ static_dir = ${JSON.stringify(resolve("dist"))}
 homeserver = ${JSON.stringify(options.homeserver || "")}
 locked = ${options.locked ?? true}
 allowed_homeservers = ${JSON.stringify(options.allowed || [])}
+[auth]
+allowed_origins = ${JSON.stringify(options.authAllowed || [])}
+clients = ${options.authClient ? `[{ issuer = ${JSON.stringify(options.authClient.issuer)}, client_id = ${JSON.stringify(options.authClient.id)} }]` : "[]"}
 [storage]
 data_dir = ${JSON.stringify(directory)}
 [limits]

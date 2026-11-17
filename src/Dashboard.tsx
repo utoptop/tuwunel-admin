@@ -49,55 +49,29 @@ export default function Dashboard({
   return (
     <>
       <PageTitle
-        eyebrow="YOUR HOMESERVER, AT A GLANCE"
+        eyebrow="WORKSPACE / OVERVIEW"
         title="服务器概览"
-        description="欢迎回来。你的 Matrix 服务器，一目了然。"
+        description="掌握用户、房间与存储状态，处理日常管理事务。"
       >
         <Refresh onClick={result.reload} />
       </PageTitle>
-      <div className="hero">
-        <div className="hero-content">
-          <Badge tone="purple">
-            <span className="dot" />
-            管理员会话已验证
-          </Badge>
-          <h2>
-            让连接更简单，
-            <br />
-            让管理更从容。
-          </h2>
-          <p>
-            集中管理用户、房间与媒体，
-            <br />
-            为你的 Matrix 社区保持良好的运行状态。
-          </p>
-          <Button kind="dark" onClick={() => navigate("users")}>
-            管理用户
-            <ArrowRight size={16} />
-          </Button>
+      <div className="overview-connection">
+        <div className="overview-server-icon">
+          <Boxes size={25} />
         </div>
-        <div className="network-art" aria-hidden="true">
-          <div className="orbit one" />
-          <div className="orbit two" />
-          <div className="core">
-            <ShieldCheck size={42} />
-          </div>
-          <div className="node n1">
-            <Users size={23} />
-          </div>
-          <div className="node n2">
-            <LayoutGrid size={23} />
-          </div>
-          <div className="node n3">
-            <HardDrive size={22} />
-          </div>
-          <span className="spark s1" />
-          <span className="spark s2" />
+        <div>
+          <span>当前连接</span>
+          <h2>{new URL(session.homeserver).host}</h2>
+          <p>{session.userId}</p>
         </div>
-        <div className="hero-server">
-          <span className="dot" />
-          {new URL(session.homeserver).host}
-        </div>
+        <Badge tone="green">
+          <ShieldCheck size={12} />
+          管理员已验证
+        </Badge>
+        <Button onClick={() => navigate("users")}>
+          管理用户
+          <ArrowRight size={15} />
+        </Button>
       </div>
       <ErrorBox error={result.error} />
       <div className="stats-grid">
@@ -161,6 +135,22 @@ export default function Dashboard({
               {s.error ? "暂不可用 · 进入页面查看" : s.label}
               <ArrowRight size={13} />
             </small>
+          </button>
+        ))}
+      </div>
+      <div className="quick-actions">
+        {[
+          ["rooms", "房间管理", "浏览房间与成员", LayoutGrid],
+          ["media", "媒体与存储", "查看占用与保留策略", HardDrive],
+          ["audit", "操作审计", "追踪最近的管理变更", ShieldCheck],
+        ].map(([key, title, text, Icon]: any) => (
+          <button key={key} onClick={() => navigate(key)}>
+            <Icon size={20} />
+            <span>
+              <strong>{title}</strong>
+              <small>{text}</small>
+            </span>
+            <ArrowRight size={15} />
           </button>
         ))}
       </div>
@@ -257,7 +247,7 @@ export default function Dashboard({
         </div>
         <div className="strip-right">
           <Badge tone="purple">Matrix Admin API</Badge>
-          <span>管理系统 v1.1.0</span>
+          <span>管理系统 v1.2.0</span>
         </div>
       </div>
     </>

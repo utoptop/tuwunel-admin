@@ -1,4 +1,5 @@
 use crate::{
+    authentication::{self, Discovery, OAuthSession, Pending},
     catalog::{self, AdminRequest, Endpoint},
     config::Config,
     error::{AppError, Result},
@@ -37,13 +38,19 @@ pub struct Session {
     pub expires: u64,
     pub verified: u64,
     pub matrix: Matrix,
+    pub oauth: Option<Arc<Mutex<OAuthSession>>>,
 }
 pub struct Inner {
     pub config: Config,
     pub store: SharedStore,
     pub catalog: HashMap<String, Endpoint>,
     sessions: RwLock<HashMap<String, Session>>,
-    attempts: Mutex<HashMap<IpAddr, Vec<u64>>>,
+    pub attempts: Mutex<HashMap<IpAddr, Vec<u64>>>,
+    pub discovery_attempts: Mutex<HashMap<IpAddr, Vec<u64>>>,
+    pub discovery: Mutex<HashMap<String, Discovery>>,
+    pub pending_auth: Mutex<HashMap<String, Pending>>,
+    pub registration_lock: Mutex<()>,
+    pub avatar_limit: tokio::sync::Semaphore,
     policy_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 pub type AppState = Arc<Inner>;
@@ -57,6 +64,11 @@ impl Inner {
             catalog: catalog::catalog(),
             sessions: RwLock::new(HashMap::new()),
             attempts: Mutex::new(HashMap::new()),
+            discovery_attempts: Mutex::new(HashMap::new()),
+            discovery: Mutex::new(HashMap::new()),
+            pending_auth: Mutex::new(HashMap::new()),
+            registration_lock: Mutex::new(()),
+            avatar_limit: tokio::sync::Semaphore::new(8),
             policy_locks: Mutex::new(HashMap::new()),
         }))
     }
@@ -87,13 +99,16 @@ where
     }
 }
 fn cookie_id(headers: &HeaderMap) -> Option<String> {
+    cookie_value(headers, "ta_session")
+}
+pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get("cookie")?
         .to_str()
         .ok()?
         .split(';')
         .filter_map(|c| c.trim().split_once('='))
-        .find(|(k, _)| *k == "ta_session")
+        .find(|(k, _)| *k == name)
         .map(|(_, v)| v.to_owned())
 }
 fn cookie(state: &AppState, value: &str, max_age: u64) -> String {
@@ -109,9 +124,13 @@ fn cookie(state: &AppState, value: &str, max_age: u64) -> String {
 fn session_json(s: &Session) -> Value {
     json!({"userId":s.user_id,"csrf":s.csrf,"homeserver":s.matrix.origin,"expires":s.expires})
 }
-async fn auth(state: &AppState, headers: &HeaderMap, mutation: bool) -> Result<(String, Session)> {
+pub async fn auth(
+    state: &AppState,
+    headers: &HeaderMap,
+    mutation: bool,
+) -> Result<(String, Session)> {
     let id = cookie_id(headers).ok_or_else(|| AppError::new(401, "会话已过期，请重新登录"))?;
-    let session = state
+    let mut session = state
         .sessions
         .read()
         .await
@@ -128,8 +147,38 @@ async fn auth(state: &AppState, headers: &HeaderMap, mutation: bool) -> Result<(
             return Err(AppError::new(403, "CSRF 校验失败，请刷新页面"));
         }
     }
+    if let Some(oauth) = &session.oauth {
+        let mut oauth = oauth.lock().await;
+        match oauth.current(&state.config, &session.matrix.origin).await {
+            Ok(token) => {
+                if token != session.token {
+                    session.token = token;
+                    session.verified = 0;
+                    if let Some(s) = state.sessions.write().await.get_mut(&id) {
+                        s.token = session.token.clone();
+                        s.verified = 0;
+                    }
+                }
+            }
+            Err(error) => {
+                state.sessions.write().await.remove(&id);
+                return Err(error);
+            }
+        }
+    }
     if now() - session.verified > 60000 {
-        if let Err(e) = session.matrix.verify(&session.token).await {
+        let verification = session
+            .matrix
+            .verify(&session.token)
+            .await
+            .and_then(|user| {
+                if user == session.user_id {
+                    Ok(user)
+                } else {
+                    Err(AppError::new(401, "认证身份发生变化，请重新登录"))
+                }
+            });
+        if let Err(e) = verification {
             if e.status == StatusCode::UNAUTHORIZED || e.status == StatusCode::FORBIDDEN {
                 state.sessions.write().await.remove(&id);
             }
@@ -174,6 +223,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/config", get(public_config))
         .route("/api/login", post(login))
+        .route("/api/auth/discover", post(authentication::probe))
+        .route("/api/auth/start", post(authentication::start))
+        .route("/api/auth/callback", get(authentication::callback))
+        .route("/api/avatar", get(crate::avatar::avatar))
         .route("/api/session", get(session))
         .route("/api/logout", post(logout))
         .route("/api/catalog", get(get_catalog))
@@ -241,22 +294,13 @@ async fn login(
     headers: HeaderMap,
     Payload(input): Payload<Login>,
 ) -> Result<Response> {
-    {
-        let mut attempts = state.attempts.lock().await;
-        let window = state.config.limits.login_window_seconds * 1000;
-        attempts.retain(|_, v| {
-            v.retain(|t| now().saturating_sub(*t) < window);
-            !v.is_empty()
-        });
-        if attempts.len() >= 4096 && !attempts.contains_key(&addr.ip()) {
-            return Err(AppError::new(429, "登录流量过大，请稍后重试"));
-        }
-        let recent = attempts.entry(addr.ip()).or_default();
-        if recent.len() >= state.config.limits.login_attempts {
-            return Err(AppError::new(429, "登录尝试过多，请稍后重试"));
-        }
-        recent.push(now());
-    }
+    limit(
+        &state.attempts,
+        addr.ip(),
+        state.config.limits.login_attempts,
+        state.config.limits.login_window_seconds * 1000,
+    )
+    .await?;
     let (origin, _) = state
         .config
         .select_homeserver(input.homeserver.as_deref())?;
@@ -264,6 +308,12 @@ async fn login(
     let (token, owned) = if let Some(token) = input.access_token.filter(|v| !v.is_empty()) {
         (token, false)
     } else {
+        if !authentication::discover(&state, Some(&origin))
+            .await?
+            .password
+        {
+            return Err(AppError::new(400, "服务器使用外部认证，请通过认证入口登录"));
+        }
         let username = input
             .username
             .filter(|v| !v.is_empty())
@@ -281,10 +331,28 @@ async fn login(
             true,
         )
     };
+    let response = finish_login(&state, &headers, matrix, token, owned, None).await?;
+    state.attempts.lock().await.remove(&addr.ip());
+    Ok(response)
+}
+pub async fn finish_login(
+    state: &AppState,
+    headers: &HeaderMap,
+    matrix: Matrix,
+    token: String,
+    owned: bool,
+    oauth: Option<Arc<Mutex<OAuthSession>>>,
+) -> Result<Response> {
     let user_id = match matrix.verify(&token).await {
         Ok(user) => user,
         Err(error) => {
-            if owned {
+            if let Some(oauth) = &oauth {
+                oauth
+                    .lock()
+                    .await
+                    .revoke(&state.config, &matrix.origin)
+                    .await;
+            } else if owned {
                 let _ = matrix
                     .request(
                         &token,
@@ -305,6 +373,7 @@ async fn login(
         expires: now() + state.config.limits.session_hours * 3600000,
         verified: now(),
         matrix,
+        oauth,
     };
     let id = random_hex(32);
     // Reserve capacity before disk I/O; never hold the session map while awaiting network.
@@ -312,7 +381,7 @@ async fn login(
         let mut sessions = state.sessions.write().await;
         if sessions.len() >= state.config.limits.max_sessions {
             drop(sessions);
-            revoke(session).await;
+            revoke(state.config.clone(), session).await;
             return Err(AppError::new(429, "当前会话数量已达上限，请稍后重试"));
         }
         let old = cookie_id(&headers).and_then(|id| sessions.remove(&id));
@@ -321,15 +390,14 @@ async fn login(
     };
     if let Some(old) = old {
         if old.token != session.token || old.matrix.origin != session.matrix.origin {
-            tokio::spawn(revoke(old));
+            tokio::spawn(revoke(state.config.clone(), old));
         }
     }
     if let Err(error) = audit(&state, &session, "管理员登录", "", "success").await {
         state.sessions.write().await.remove(&id);
-        revoke(session).await;
+        revoke(state.config.clone(), session).await;
         return Err(error);
     }
-    state.attempts.lock().await.remove(&addr.ip());
     let mut response = Json(session_json(&session)).into_response();
     response.headers_mut().insert(
         "set-cookie",
@@ -342,8 +410,10 @@ async fn login(
     );
     Ok(response)
 }
-async fn revoke(s: Session) {
-    if s.owned {
+async fn revoke(config: Config, s: Session) {
+    if let Some(oauth) = &s.oauth {
+        oauth.lock().await.revoke(&config, &s.matrix.origin).await;
+    } else if s.owned {
         let _ = s
             .matrix
             .request(
@@ -362,7 +432,7 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Result<Js
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
     let (id, s) = auth(&state, &headers, true).await?;
     state.sessions.write().await.remove(&id);
-    tokio::spawn(revoke(s.clone()));
+    tokio::spawn(revoke(state.config.clone(), s.clone()));
     audit(&state, &s, "退出登录", "", "success").await?;
     let mut response = Json(json!({"ok":true})).into_response();
     response.headers_mut().insert(
@@ -540,8 +610,30 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
                     .collect::<Vec<_>>()
             };
             for s in expired {
-                tokio::spawn(revoke(s));
+                tokio::spawn(revoke(state.config.clone(), s));
             }
         }
     })
+}
+
+pub async fn limit(
+    map: &Mutex<HashMap<IpAddr, Vec<u64>>>,
+    ip: IpAddr,
+    max: usize,
+    window: u64,
+) -> Result<()> {
+    let mut attempts = map.lock().await;
+    attempts.retain(|_, v| {
+        v.retain(|t| now().saturating_sub(*t) < window);
+        !v.is_empty()
+    });
+    if attempts.len() >= 4096 && !attempts.contains_key(&ip) {
+        return Err(AppError::new(429, "登录流量过大，请稍后重试"));
+    }
+    let recent = attempts.entry(ip).or_default();
+    if recent.len() >= max {
+        return Err(AppError::new(429, "尝试过多，请稍后重试"));
+    }
+    recent.push(now());
+    Ok(())
 }

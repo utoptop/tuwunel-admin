@@ -31,7 +31,12 @@ export async function request(path: string, method = "GET", body?: unknown) {
   });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && path !== "/login" && path !== "/session")
+    if (
+      response.status === 401 &&
+      path !== "/login" &&
+      path !== "/session" &&
+      !path.startsWith("/auth/")
+    )
       window.dispatchEvent(new Event("session-expired"));
     throw Object.assign(
       new Error(data.error || `请求失败 (${response.status})`),

@@ -32,6 +32,13 @@ async function fake(t) {
     }
     if (req.headers.authorization === "Bearer bad")
       return send({ error: "Invalid token", errcode: "M_UNKNOWN_TOKEN" }, 401);
+    if (url.pathname === "/_matrix/client/v3/login" && req.method === "GET")
+      return send({ flows: [{ type: "m.login.password" }] });
+    if (
+      url.pathname.includes("/auth_metadata") ||
+      url.pathname.includes("/auth_issuer")
+    )
+      return send({ errcode: "M_UNRECOGNIZED" }, 404);
     if (url.pathname === "/_matrix/client/v3/login")
       return send({ access_token: "password-token", user_id: "@admin:test" });
     if (url.pathname.endsWith("/whoami"))

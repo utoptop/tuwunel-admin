@@ -84,35 +84,55 @@ pub struct Matrix {
 impl Matrix {
     pub fn new(config: &Config, origin: &str) -> Result<Self> {
         let (origin, trusted) = config.select_homeserver(Some(origin))?;
-        let url = Url::parse(&origin).unwrap();
-        if !trusted
-            && let Some(host) = url.host_str()
-            && let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
-            && !public_ip(ip)
-        {
-            return Err(AppError::new(
-                403,
-                "自定义服务器不能指向内网、回环或保留地址，请在配置文件中明确允许此地址",
-            ));
-        }
-        let mut builder = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(config.limits.request_timeout_seconds))
-            .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(8)
-            .user_agent("Tuwunel-Admin/1.1");
-        if !trusted {
-            builder = builder.dns_resolver(Arc::new(PublicDns));
-        }
-        let client = builder
-            .build()
-            .map_err(|_| AppError::new(500, "无法初始化 Matrix HTTP 客户端"))?;
+        Self::transport(config, &origin, trusted)
+    }
+    pub fn transport(config: &Config, origin: &str, trusted: bool) -> Result<Self> {
+        let client = safe_client(
+            config,
+            &Url::parse(origin).map_err(|_| AppError::new(400, "无效地址"))?,
+            trusted,
+        )?;
         Ok(Self {
-            origin,
+            origin: origin.into(),
             client,
             max_bytes: config.limits.max_response_bytes,
         })
+    }
+    pub async fn image(&self, token: &str, path: &str) -> Result<(String, Vec<u8>)> {
+        let response = self
+            .client
+            .get(format!("{}{}", self.origin, path))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|_| AppError::new(502, "头像读取失败"))?;
+        if response.status().is_redirection() {
+            return Err(AppError::new(502, "头像接口返回重定向，已拒绝转发凭据"));
+        }
+        if !response.status().is_success() {
+            return Err(AppError::new(response.status().as_u16(), "头像不可用"));
+        }
+        let mime = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .to_owned();
+        if ![
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp",
+            "image/avif",
+        ]
+        .contains(&mime.as_str())
+        {
+            return Err(AppError::new(415, "不支持的头像格式"));
+        }
+        Ok((mime, limited_bytes(response, 2 * 1024 * 1024).await?))
     }
     pub async fn request(
         &self,
@@ -205,4 +225,57 @@ impl Matrix {
         }
         Ok(user.to_owned())
     }
+}
+
+// Apply the same DNS and redirect safeguards to separately discovered auth endpoints.
+pub fn safe_client(config: &Config, url: &Url, trusted: bool) -> Result<Client> {
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || (!trusted && url.scheme() != "https")
+    {
+        return Err(AppError::new(
+            400,
+            "认证地址必须使用 HTTPS；内网地址需要在配置中明确允许",
+        ));
+    }
+    if !trusted
+        && let Some(host) = url.host_str()
+        && let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+        && !public_ip(ip)
+    {
+        return Err(AppError::new(403, "自定义地址不能指向私网或保留 IP"));
+    }
+    let mut builder = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(config.limits.request_timeout_seconds))
+        .connect_timeout(Duration::from_secs(10))
+        .pool_max_idle_per_host(8)
+        .user_agent("Tuwunel-Admin/1.2");
+    if !trusted {
+        builder = builder.dns_resolver(Arc::new(PublicDns));
+    }
+    builder
+        .build()
+        .map_err(|_| AppError::new(500, "HTTP 客户端初始化失败"))
+}
+pub async fn limited_bytes(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if response.content_length().is_some_and(|n| n > max as u64) {
+        return Err(AppError::new(502, "上游响应超过大小限制"));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| AppError::new(502, "上游响应读取失败"))?
+    {
+        if bytes.len() + chunk.len() > max {
+            return Err(AppError::new(502, "上游响应超过大小限制"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }

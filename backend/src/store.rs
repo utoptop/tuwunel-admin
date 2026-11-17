@@ -34,6 +34,8 @@ pub struct Data {
     pub schema_version: u32,
     #[serde(default)]
     pub policies: BTreeMap<String, Policy>,
+    #[serde(default)]
+    pub oauth_clients: BTreeMap<String, String>,
     pub audit: Vec<Value>,
 }
 pub struct Store {
@@ -136,6 +138,7 @@ impl Store {
                     schema_version: 2,
                     policies,
                     audit,
+                    ..Data::default()
                 }
             } else {
                 let data: Data = serde_json::from_value(value)

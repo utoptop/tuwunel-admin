@@ -89,6 +89,9 @@ async function api(path, method = "GET", body) {
 const call = (id, params = {}, query = {}, body) =>
   api("/admin", "POST", { id, params, query, body, confirm: true });
 try {
+  const detected = await api("/auth/discover", "POST", {});
+  assert.equal(detected.password, true);
+  log("automatic password login discovery");
   await api("/login", "POST", { username: "admin", password });
   log("administrator password login");
   const version = await call("version");
@@ -103,6 +106,43 @@ try {
   );
   assert.equal((await call("user", { user_id: uid })).name, uid);
   log("create user / details");
+  const avatarUpload = await fetch(
+    upstream + "/_matrix/media/v3/upload?filename=avatar.png",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "image/png",
+      },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    },
+  );
+  const avatar = await avatarUpload.json();
+  assert.ok(avatarUpload.ok);
+  await call(
+    "saveUser",
+    { user_id: uid },
+    {},
+    { avatar_url: avatar.content_uri },
+  );
+  const avatarUser = (
+    await call("users", {}, { name: `smoke_${suffix}` })
+  ).users.find((u) => u.name === uid);
+  assert.equal(avatarUser.avatar_url, avatar.content_uri);
+  const avatarResponse = await fetch(
+    base +
+      "/api/avatar?" +
+      new URLSearchParams({ mxc: avatar.content_uri, homeserver: upstream }),
+    { headers: { Cookie: cookie } },
+  );
+  assert.equal(avatarResponse.status, 200, await avatarResponse.clone().text());
+  assert.match(avatarResponse.headers.get("content-type"), /^image\//);
+  assert.ok((await avatarResponse.arrayBuffer()).byteLength > 0);
+  log("real user avatar upload / profile / authenticated thumbnail proxy");
+
   assert.ok(
     (
       await call("users", {}, { name: `smoke_${suffix}`, limit: 20 })
