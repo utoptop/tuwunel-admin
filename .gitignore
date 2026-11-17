@@ -3,8 +3,11 @@ dist/
 data/
 .env
 .env.*
-!.env.example
 *.tsbuildinfo
 *.log
 .DS_Store
 test-results/
+target/
+config.toml
+config.*.toml
+!config.example.toml

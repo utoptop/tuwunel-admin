@@ -257,7 +257,7 @@ export default function Dashboard({
         </div>
         <div className="strip-right">
           <Badge tone="purple">Matrix Admin API</Badge>
-          <span>管理系统 v1.0.0</span>
+          <span>管理系统 v1.1.0</span>
         </div>
       </div>
     </>

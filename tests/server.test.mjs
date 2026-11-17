@@ -1,155 +1,249 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../server/app.mjs";
-import { buildRequest, catalog } from "../server/catalog.mjs";
-import { normalizeHomeserver } from "../server/matrix.mjs";
-import { Store } from "../server/store.mjs";
-import { validatePolicy } from "../server/policy.mjs";
+import { startRust } from "./helpers.mjs";
 
-const listen = (server) =>
-  new Promise((resolve) =>
-    server.listen(0, "127.0.0.1", () =>
-      resolve(`http://127.0.0.1:${server.address().port}`),
-    ),
-  );
-const close = (server) =>
-  new Promise((resolve) => {
-    server.close(resolve);
-    server.closeAllConnections();
-  });
-async function fixture(t) {
+async function fake(t) {
   const calls = [];
-  let admin = true,
-    remoteFailure = false;
-  const upstream = http.createServer(async (req, res) => {
+  let isAdmin = true,
+    failRemote = false,
+    redirect = false;
+  const server = http.createServer(async (req, res) => {
     let text = "";
     for await (const c of req) text += c;
     const url = new URL(req.url, "http://localhost");
     calls.push({
       method: req.method,
-      path: url.pathname,
+      path: decodeURIComponent(url.pathname),
       query: Object.fromEntries(url.searchParams),
       body: text ? JSON.parse(text) : null,
       auth: req.headers.authorization,
     });
-    const reply = (data, status = 200) => {
+    const send = (data, status = 200) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(data));
     };
-    if (url.pathname.endsWith("/login") && url.pathname.startsWith("/_matrix"))
-      return reply({
-        user_id: "@admin:test",
-        access_token: "password-login-secret",
-      });
+    if (redirect) {
+      res.writeHead(302, { Location: "http://127.0.0.1:1/credentials" });
+      return res.end();
+    }
     if (req.headers.authorization === "Bearer bad")
-      return reply({ errcode: "M_UNKNOWN_TOKEN", error: "Invalid token" }, 401);
+      return send({ error: "Invalid token", errcode: "M_UNKNOWN_TOKEN" }, 401);
+    if (url.pathname === "/_matrix/client/v3/login")
+      return send({ access_token: "password-token", user_id: "@admin:test" });
     if (url.pathname.endsWith("/whoami"))
-      return reply({ user_id: "@admin:test" });
-    if (url.pathname === "/_synapse/admin/v2/users/%40admin%3Atest")
-      return reply({ name: "@admin:test", admin });
+      return send({ user_id: "@admin:test" });
+    if (
+      decodeURIComponent(url.pathname) ===
+      "/_synapse/admin/v2/users/@admin:test"
+    )
+      return send({ name: "@admin:test", admin: isAdmin });
+    if (url.pathname.endsWith("/media/delete")) return send({ total: 3 });
     if (url.pathname.endsWith("/purge_media_cache"))
-      return remoteFailure
-        ? reply({ error: "Remote purge unavailable" }, 503)
-        : reply({ deleted: 2 });
-    if (url.pathname.endsWith("/media/delete"))
-      return reply({ total: 3, deleted_media: ["a", "b", "c"] });
-    if (url.pathname.endsWith("/server_version"))
-      return reply({ server_name: "Tuwunel", server_version: "test" });
+      return failRemote
+        ? send({ error: "Remote failed" }, 503)
+        : send({ deleted: 2 });
     if (url.pathname.endsWith("/accountdata"))
-      return reply({ errcode: "M_UNRECOGNIZED", error: "Unrecognized" }, 404);
-    return reply({ ok: true, users: [], total: 0 });
+      return send({ errcode: "M_UNRECOGNIZED" }, 404);
+    return send({
+      ok: true,
+      users: [{ name: "@admin:test", admin: true }],
+      total: 1,
+    });
   });
-  const homeserver = await listen(upstream);
-  const directory = await mkdtemp(join(tmpdir(), "tuwunel-admin-test-"));
-  const app = createApp({
-    homeserver,
-    publicUrl: "http://admin.test",
-    dataDir: directory,
-    scheduler: false,
-  });
-  const base = await listen(app.server);
-  t.after(async () => {
-    await close(app.server);
-    await close(upstream);
-    await rm(directory, { recursive: true, force: true });
-  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(
+    () =>
+      new Promise((r) => {
+        server.close(r);
+        server.closeAllConnections();
+      }),
+  );
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    calls,
+    setAdmin: (v) => (isAdmin = v),
+    setRemoteFailure: (v) => (failRemote = v),
+    setRedirect: (v) => (redirect = v),
+  };
+}
+function client(app) {
   let cookie = "",
     csrf = "";
-  async function call(path, method = "GET", body, headers = {}) {
-    const response = await fetch(base + "/api" + path, {
+  return async function call(path, method = "GET", body, overrides = {}) {
+    const res = await fetch(app.base + "/api" + path, {
       method,
       headers: {
         Origin: "http://admin.test",
         Cookie: cookie,
         "X-CSRF-Token": csrf,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...headers,
+        ...overrides,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const data = await response.json();
-    if (path === "/login" && response.ok) {
-      cookie = response.headers.get("set-cookie").split(";")[0];
+    const data = await res.json();
+    if (path === "/login" && res.ok) {
+      cookie = res.headers.get("set-cookie").split(";")[0];
       csrf = data.csrf;
     }
-    return { status: response.status, data, headers: response.headers };
-  }
-  return {
-    app,
-    call,
-    calls,
-    directory,
-    homeserver,
-    setAdmin: (v) => (admin = v),
-    setRemoteFailure: (v) => (remoteFailure = v),
+    return { status: res.status, data, headers: res.headers };
   };
 }
+async function fixture(t, options = {}) {
+  const upstream = await fake(t);
+  const app = await startRust({ homeserver: upstream.origin, ...options });
+  t.after(() => app.stop());
+  return { upstream, app, call: client(app) };
+}
+const policy = {
+  enabled: true,
+  localDays: 90,
+  remoteDays: 30,
+  intervalHours: 24,
+  sizeGt: 1024,
+  keepProfiles: true,
+  confirm: true,
+};
 
-test("catalog uses unique allowlisted operations and safe encoded paths", () => {
-  assert.equal(new Set(catalog.map((e) => e.id)).size, catalog.length);
-  assert.equal(catalog.length, 73);
-  assert.equal(
-    buildRequest("joinRoom", { room_id_or_alias: "#lounge:example.org" }).path,
-    "/_synapse/admin/v1/join/%23lounge%3Aexample.org",
-  );
-  for (const value of ["../evil", "%2e%2e", "x\\y", "x\n"])
-    assert.throws(() => buildRequest("user", { user_id: value }));
-  assert.throws(() => buildRequest("http://attacker.test"));
-  assert.throws(() => buildRequest("users", {}, { access_token: "secret" }));
-  assert.throws(() => normalizeHomeserver("https://user:pass@example.org"));
-  assert.throws(() => normalizeHomeserver("https://example.org/path"));
-});
-test("authentication requires administrator and never exposes the upstream token", async (t) => {
+test("Rust health, public config, 73-operation catalog and private session", async (t) => {
   const f = await fixture(t);
-  assert.equal((await f.call("/admin", "POST", { id: "users" })).status, 401);
-  f.setAdmin(false);
-  assert.equal(
-    (await f.call("/login", "POST", { accessToken: "test-secret" })).status,
-    403,
-  );
-  f.setAdmin(true);
+  assert.equal((await f.call("/health")).data.runtime, "rust");
+  const config = (await f.call("/config")).data;
+  assert.equal(config.locked, true);
+  assert.equal(config.homeserver, f.upstream.origin);
+  assert.equal((await f.call("/catalog")).status, 401);
   const login = await f.call("/login", "POST", {
     username: "admin",
-    password: "typed-secret",
+    password: "typed-password",
   });
   assert.equal(login.status, 200);
-  assert.equal(login.data.userId, "@admin:test");
   assert.match(login.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
-  assert.ok(!JSON.stringify(login.data).includes("password-login-secret"));
-  const session = await f.call("/session");
-  assert.equal(session.status, 200);
-  assert.ok(!JSON.stringify(session.data).includes("password-login-secret"));
-  const stored = await readFile(join(f.directory, "state.json"), "utf8");
-  assert.ok(!stored.includes("typed-secret"));
-  assert.ok(!stored.includes("password-login-secret"));
+  assert.ok(!JSON.stringify(login.data).includes("password-token"));
+  assert.equal((await f.call("/catalog")).data.length, 73);
+  assert.equal((await f.call("/session")).data.homeserver, f.upstream.origin);
+  const disk = await readFile(join(f.app.directory, "state.json"), "utf8");
+  assert.ok(!disk.includes("typed-password"));
+  assert.ok(!disk.includes("password-token"));
 });
-test("proxy enforces origin, CSRF, operation allowlist and mutation confirmation", async (t) => {
+test("non-administrators and bad tokens cannot log in", async (t) => {
   const f = await fixture(t);
-  await f.call("/login", "POST", { accessToken: "test-secret" });
+  f.upstream.setAdmin(false);
+  assert.equal(
+    (await f.call("/login", "POST", { username: "admin", password: "pw" }))
+      .status,
+    403,
+  );
+  assert.equal(f.upstream.calls.at(-1).path, "/_matrix/client/v3/logout");
+  assert.equal(
+    (await f.call("/login", "POST", { accessToken: "bad" })).status,
+    401,
+  );
+});
+test("locked server is enforced on the backend, not just the input field", async (t) => {
+  const f = await fixture(t),
+    other = await fake(t);
+  assert.equal(
+    (
+      await f.call("/login", "POST", {
+        homeserver: other.origin,
+        accessToken: "test",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(other.calls.length, 0);
+  assert.equal(f.upstream.calls.length, 0);
+  assert.equal(
+    (
+      await f.call("/login", "POST", {
+        homeserver: f.upstream.origin + "/",
+        accessToken: "test",
+      })
+    ).status,
+    200,
+  );
+});
+test("custom mode with empty default accepts configured choices and rejects unlisted targets", async (t) => {
+  const one = await fake(t),
+    two = await fake(t),
+    app = await startRust({ locked: false, allowed: [one.origin, two.origin] });
+  t.after(() => app.stop());
+  const a = client(app),
+    b = client(app);
+  assert.equal((await a("/config")).data.configured, true);
+  assert.equal(
+    (
+      await a("/login", "POST", {
+        homeserver: one.origin,
+        accessToken: "first-token",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await b("/login", "POST", {
+        homeserver: two.origin,
+        accessToken: "second-token",
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await a("/session")).data.homeserver, one.origin);
+  assert.equal((await b("/session")).data.homeserver, two.origin);
+  assert.equal(
+    (
+      await a("/login", "POST", {
+        homeserver: "https://unlisted.example",
+        accessToken: "test",
+      })
+    ).status,
+    403,
+  );
+});
+test("custom public mode blocks private IP, HTTP, credentials and URL paths before sending tokens", async (t) => {
+  const f = await fixture(t, { homeserver: "", locked: false });
+  for (const homeserver of [
+    "http://example.com",
+    "https://127.0.0.1",
+    "https://[::1]",
+    "https://169.254.169.254",
+    "https://[::ffff:127.0.0.1]",
+    "https://user:pw@example.com",
+    "https://example.com/path",
+  ]) {
+    const r = await f.call("/login", "POST", {
+      homeserver,
+      accessToken: "private-token",
+    });
+    assert.ok([400, 403].includes(r.status), homeserver);
+  }
+  assert.equal(f.upstream.calls.length, 0);
+});
+test("SSRF-safe DNS refuses localhost and redirects never forward credentials", async (t) => {
+  const f = await fixture(t, { homeserver: "", locked: false });
+  assert.equal(
+    (
+      await f.call("/login", "POST", {
+        homeserver: "https://localhost",
+        accessToken: "private-token",
+      })
+    ).status,
+    502,
+  );
+  const g = await fixture(t);
+  g.upstream.setRedirect(true);
+  const r = await g.call("/login", "POST", { accessToken: "test" });
+  assert.equal(r.status, 502);
+  assert.match(r.data.error, /重定向/);
+});
+test("CSRF, origin, allowlist, body limits and mutation confirmation", async (t) => {
+  const f = await fixture(t);
+  await f.call("/login", "POST", { accessToken: "test" });
   assert.equal(
     (
       await f.call(
@@ -167,7 +261,7 @@ test("proxy enforces origin, CSRF, operation allowlist and mutation confirmation
         "/admin",
         "POST",
         { id: "users" },
-        { "X-CSRF-Token": "wrong" },
+        { "X-CSRF-Token": "x".repeat(48) },
       )
     ).status,
     403,
@@ -176,144 +270,220 @@ test("proxy enforces origin, CSRF, operation allowlist and mutation confirmation
   assert.equal(
     (
       await f.call("/admin", "POST", {
-        id: "password",
-        params: { user_id: "@alice:test" },
-        body: { new_password: "private" },
+        id: "users",
+        homeserver: "https://other.test",
+      })
+    ).status,
+    422,
+  );
+  assert.equal(
+    (
+      await f.call("/admin", "POST", {
+        id: "users",
+        query: { access_token: "test" },
       })
     ).status,
     400,
   );
-  const update = await f.call("/admin", "POST", {
+  assert.equal(
+    (
+      await f.call("/admin", "POST", {
+        id: "user",
+        params: { user_id: "../evil" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await f.call("/admin", "POST", {
+        id: "users",
+        body: { padding: "x".repeat(140000) },
+      })
+    ).status,
+    413,
+  );
+  assert.equal(
+    (
+      await f.call("/admin", "POST", {
+        id: "password",
+        params: { user_id: "@alice:test" },
+        body: { new_password: "secret" },
+      })
+    ).status,
+    400,
+  );
+  const r = await f.call("/admin", "POST", {
     id: "password",
     params: { user_id: "@alice:test" },
-    body: { new_password: "private", logout_devices: true },
+    body: { new_password: "secret", logout_devices: true },
     confirm: true,
   });
-  assert.equal(update.status, 200);
-  assert.deepEqual(f.calls.at(-1), {
-    method: "POST",
-    path: "/_synapse/admin/v1/reset_password/%40alice%3Atest",
-    query: {},
-    body: { new_password: "private", logout_devices: true },
-    auth: "Bearer test-secret",
-  });
-  const audit = await f.call("/audit");
-  assert.equal(audit.data.entries[0].action, "重置密码");
-  assert.ok(!JSON.stringify(audit.data).includes("private"));
-  assert.ok(!JSON.stringify(audit.data).includes("test-secret"));
+  assert.equal(r.status, 200);
+  assert.equal(
+    f.upstream.calls.at(-1).path,
+    "/_synapse/admin/v1/reset_password/@alice:test",
+  );
+  const audit = (await f.call("/audit")).data;
+  assert.equal(audit.entries[0].action, "重置密码");
+  assert.ok(!JSON.stringify(audit).includes("secret"));
 });
-test("unsupported API surfaces a clear error instead of reporting success", async (t) => {
+test("upstream unsupported errors remain visible", async (t) => {
   const f = await fixture(t);
-  await f.call("/login", "POST", { accessToken: "test-secret" });
+  await f.call("/login", "POST", { accessToken: "test" });
   const r = await f.call("/admin", "POST", {
     id: "accountData",
-    params: { user_id: "@a:test" },
+    params: { user_id: "@alice:test" },
   });
   assert.equal(r.status, 404);
   assert.match(r.data.error, /不支持此 API/);
 });
-test("retention keeps encrypted credentials across restart and sends time cutoffs as query parameters", async (t) => {
-  const f = await fixture(t);
-  await f.call("/login", "POST", { accessToken: "test-secret" });
-  const policy = {
-    enabled: true,
-    localDays: 90,
-    remoteDays: 30,
-    intervalHours: 24,
-    sizeGt: 1024,
-    keepProfiles: true,
-    confirm: true,
-  };
-  assert.equal((await f.call("/policy", "PUT", policy)).status, 400);
-  const saved = await f.call("/policy", "PUT", {
-    ...policy,
-    schedulerToken: "scheduler-private-token",
-  });
-  assert.equal(saved.status, 200);
-  assert.equal(saved.data.hasCredential, true);
-  assert.ok(!JSON.stringify(saved.data).includes("scheduler-private-token"));
-  const disk = await readFile(join(f.directory, "state.json"), "utf8");
-  assert.ok(!disk.includes("scheduler-private-token"));
-  const reloaded = new Store(f.directory);
+test("server-isolated audits, policies and credentials, even with identical user IDs", async (t) => {
+  const one = await fake(t),
+    two = await fake(t),
+    app = await startRust({ locked: false, allowed: [one.origin, two.origin] });
+  t.after(() => app.stop());
+  const a = client(app),
+    b = client(app);
+  await a("/login", "POST", { homeserver: one.origin, accessToken: "a" });
+  await b("/login", "POST", { homeserver: two.origin, accessToken: "b" });
   assert.equal(
-    reloaded.unseal(reloaded.state.policy.credential),
-    "scheduler-private-token",
+    (await a("/policy", "PUT", { ...policy, schedulerToken: "scheduler-a" }))
+      .status,
+    200,
   );
-  assert.equal(await f.app.runner.run(), undefined, "not due yet");
-  const started = Date.now();
-  const r = await f.call("/policy/run", "POST", { confirm: true });
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.data.lastResult, {
-    ok: true,
-    counts: { deleteOldMedia: 3, purgeRemote: 2 },
+  assert.equal((await b("/policy")).data.hasCredential, false);
+  assert.equal((await b("/policy", "PUT", policy)).status, 400);
+  await b("/policy", "PUT", {
+    ...policy,
+    localDays: 7,
+    schedulerToken: "scheduler-b",
   });
-  const local = f.calls.find((c) => c.path.endsWith("/media/delete"));
+  assert.equal((await a("/policy")).data.localDays, 90);
+  assert.equal((await b("/policy")).data.localDays, 7);
+  const before = two.calls.length;
+  assert.equal(
+    (await a("/policy/run", "POST", { confirm: true })).data.lastResult.ok,
+    true,
+  );
+  assert.equal(two.calls.length, before);
+  assert.equal(one.calls.at(-1).auth, "Bearer scheduler-a");
+  assert.ok(
+    (await a("/audit")).data.entries.every((e) => e.homeserver === one.origin),
+  );
+  assert.ok(
+    (await b("/audit")).data.entries.every((e) => e.homeserver === two.origin),
+  );
+  assert.ok(
+    !(await readFile(join(app.directory, "state.json"), "utf8")).includes(
+      "scheduler-a",
+    ),
+  );
+});
+test("persistent scheduler runs after restart without a browser session", async (t) => {
+  const upstream = await fake(t),
+    directory = await mkdtemp(join(tmpdir(), "tuwunel-persist-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = await startRust({ homeserver: upstream.origin, directory });
+  let call = client(first);
+  await call("/login", "POST", { accessToken: "test" });
+  await call("/policy", "PUT", {
+    ...policy,
+    schedulerToken: "scheduler-persist",
+  });
+  await first.stop();
+  const path = join(directory, "state.json"),
+    saved = JSON.parse(await readFile(path, "utf8"));
+  saved.policies[upstream.origin].nextRun = 0;
+  await writeFile(path, JSON.stringify(saved));
+  const second = await startRust({
+    homeserver: upstream.origin,
+    directory,
+    scheduler: true,
+  });
+  t.after(() => second.stop());
+  for (
+    let i = 0;
+    i < 30 &&
+    !upstream.calls.some((c) => c.path.endsWith("/purge_media_cache"));
+    i++
+  )
+    await new Promise((r) => setTimeout(r, 50));
+  assert.equal(upstream.calls.at(-1).auth, "Bearer scheduler-persist");
+  call = client(second);
+  await call("/login", "POST", { accessToken: "test" });
+  const p = (await call("/policy")).data;
+  assert.equal(p.lastResult.ok, true);
+  assert.equal(p.lastResult.counts.deleteOldMedia, 3);
+  const local = upstream.calls.find((c) => c.path.endsWith("/media/delete"));
   assert.equal(local.query.keep_profiles, "true");
   assert.equal(local.query.size_gt, "1024");
   assert.ok(
-    Math.abs(Number(local.query.before_ts) - (started - 90 * 86400000)) < 1000,
-  );
-  assert.equal(local.auth, "Bearer scheduler-private-token");
-  assert.deepEqual(local.body, {});
-  await f.call("/logout", "POST", {});
-  assert.equal((await f.call("/session")).status, 401);
-  assert.equal(
-    (await f.app.runner.run(true)).lastResult.ok,
-    true,
-    "independent token survives logout",
+    Math.abs(Number(local.query.before_ts) - (Date.now() - 90 * 86400000)) <
+      5000,
   );
 });
-test("retention records partial failure, rejects invalid settings and revoked admin credentials", async (t) => {
+test("partial failure and revoked permissions never report successful cleanup", async (t) => {
   const f = await fixture(t);
-  await f.call("/login", "POST", { accessToken: "test-secret" });
-  const p = {
-    enabled: true,
-    localDays: 90,
-    remoteDays: 30,
-    intervalHours: 24,
-    sizeGt: 0,
-    keepProfiles: true,
-    confirm: true,
-    schedulerToken: "scheduler-private-token",
-  };
-  assert.throws(() => validatePolicy({ ...p, localDays: 0 }));
-  assert.throws(() => validatePolicy({ ...p, enabled: "true" }));
-  await f.call("/policy", "PUT", p);
-  f.setRemoteFailure(true);
-  const partial = await f.app.runner.run(true);
-  assert.equal(partial.lastResult.ok, false);
-  assert.deepEqual(partial.lastResult.counts, { deleteOldMedia: 3 });
-  const before = f.calls.filter((c) => c.path.endsWith("/media/delete")).length;
-  f.setAdmin(false);
-  const revoked = await f.app.runner.run(true);
-  assert.equal(revoked.lastResult.ok, false);
+  await f.call("/login", "POST", { accessToken: "test" });
+  await f.call("/policy", "PUT", { ...policy, schedulerToken: "scheduler" });
+  f.upstream.setRemoteFailure(true);
+  const partial = (await f.call("/policy/run", "POST", { confirm: true })).data
+    .lastResult;
+  assert.equal(partial.ok, false);
+  assert.deepEqual(partial.counts, { deleteOldMedia: 3 });
+  const before = f.upstream.calls.filter((c) =>
+    c.path.endsWith("/media/delete"),
+  ).length;
+  f.upstream.setAdmin(false);
+  const denied = (await f.call("/policy/run", "POST", { confirm: true })).data
+    .lastResult;
+  assert.equal(denied.ok, false);
   assert.equal(
-    f.calls.filter((c) => c.path.endsWith("/media/delete")).length,
+    f.upstream.calls.filter((c) => c.path.endsWith("/media/delete")).length,
     before,
   );
 });
-test("logout revokes only password-created Matrix sessions", async (t) => {
+test("logout revokes password-created tokens but preserves imported credentials", async (t) => {
   const f = await fixture(t);
-  await f.call("/login", "POST", {
-    username: "admin",
-    password: "typed-secret",
-  });
+  await f.call("/login", "POST", { username: "admin", password: "pw" });
   await f.call("/logout", "POST", {});
-  assert.equal(f.calls.at(-1).path, "/_matrix/client/v3/logout");
-  await f.call("/login", "POST", { accessToken: "external-token" });
-  const before = f.calls.length;
+  for (
+    let i = 0;
+    i < 10 && !f.upstream.calls.some((c) => c.path.endsWith("/logout"));
+    i++
+  )
+    await new Promise((r) => setTimeout(r, 10));
+  assert.equal(f.upstream.calls.at(-1).path, "/_matrix/client/v3/logout");
+  assert.equal((await f.call("/session")).status, 401);
+  await f.call("/login", "POST", { accessToken: "external" });
+  const before = f.upstream.calls.length;
   await f.call("/logout", "POST", {});
-  assert.equal(f.calls.length, before);
+  assert.equal(f.upstream.calls.length, before);
 });
-test("login rate limiter bounds unsuccessful attempts", async (t) => {
-  const f = await fixture(t);
-  for (let i = 0; i < 10; i++)
+test("rate limit includes attempts with invalid custom URLs", async (t) => {
+  const f = await fixture(t, {
+    locked: false,
+    homeserver: "",
+    loginAttempts: 3,
+  });
+  for (let n = 0; n < 3; n++)
     assert.equal(
-      (await f.call("/login", "POST", { accessToken: "bad" })).status,
-      401,
+      (
+        await f.call("/login", "POST", {
+          homeserver: "invalid",
+          accessToken: "test",
+        })
+      ).status,
+      400,
     );
   assert.equal(
-    (await f.call("/login", "POST", { accessToken: "bad" })).status,
+    (
+      await f.call("/login", "POST", {
+        homeserver: "invalid",
+        accessToken: "test",
+      })
+    ).status,
     429,
   );
 });

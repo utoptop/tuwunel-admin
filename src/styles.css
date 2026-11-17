@@ -2188,3 +2188,39 @@ td {
     padding: 3px 5px;
   }
 }
+.server-field {
+  margin-top: 26px;
+  margin-bottom: 12px;
+}
+.server-field > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.server-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e7deef;
+  border-radius: 7px;
+  padding: 0 12px;
+  color: #9681ad;
+}
+.server-input input {
+  border: 0 !important;
+  padding: 12px 0 !important;
+  min-width: 0;
+  background: transparent !important;
+}
+.server-input.locked {
+  background: #f6f3fa;
+  color: #857198;
+}
+.server-pin {
+  margin: 0 0 14px;
+}
+.server-pin > span {
+  font-size: 10px;
+  font-weight: 400;
+}

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../server/app.mjs";
+import { startRust } from "./helpers.mjs";
 const upstream = "http://127.0.0.1:18008";
 const password = "Disposable-Fixture-Only-2026!";
 let token;
@@ -58,14 +58,12 @@ assert.equal(
 );
 token = registration.data.access_token;
 const directory = await mkdtemp(join(tmpdir(), "tuwunel-real-"));
-const app = createApp({
+const app = await startRust({
   homeserver: upstream,
   publicUrl: "http://test.local",
-  dataDir: directory,
-  scheduler: false,
+  directory,
 });
-await new Promise((r) => app.server.listen(0, "127.0.0.1", r));
-const base = `http://127.0.0.1:${app.server.address().port}`;
+const base = app.base;
 let cookie = "",
   csrf = "";
 const log = (message) => console.log("PASS", message);
@@ -275,10 +273,7 @@ try {
   log("logout");
   console.log("All real Tuwunel smoke checks passed.");
 } finally {
-  await new Promise((r) => {
-    app.server.close(r);
-    app.server.closeAllConnections();
-  });
+  await app.stop();
   await rm(directory, { recursive: true, force: true });
   await client("/_matrix/client/v3/logout", "POST", {});
 }

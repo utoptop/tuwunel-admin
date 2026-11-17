@@ -1,0 +1,804 @@
+[
+  {
+    "group": "用户",
+    "id": "users",
+    "label": "用户列表",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/users",
+    "query": {
+      "from": 0,
+      "limit": 20,
+      "deactivated": true,
+      "locked": true,
+      "name": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "usersV3",
+    "label": "用户列表（v3）",
+    "method": "GET",
+    "path": "/_synapse/admin/v3/users",
+    "query": {
+      "from": 0,
+      "limit": 20,
+      "locked": true
+    },
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "user",
+    "label": "用户详情",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/users/{user_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "saveUser",
+    "label": "创建 / 修改用户",
+    "method": "PUT",
+    "path": "/_synapse/admin/v2/users/{user_id}",
+    "query": {},
+    "body": {
+      "displayname": "",
+      "admin": false
+    },
+    "note": "不支持的 user_type、external_ids、approved 字段会被上游忽略。"
+  },
+  {
+    "group": "用户",
+    "id": "deactivate",
+    "label": "停用 / 擦除用户",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/deactivate/{user_id}",
+    "query": {},
+    "body": {
+      "erase": false
+    },
+    "note": "erase=true 会标记擦除并清理资料；不是物理删除 Matrix ID，也不会撤回远端副本。"
+  },
+  {
+    "group": "用户",
+    "id": "password",
+    "label": "重置密码",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/reset_password/{user_id}",
+    "query": {},
+    "body": {
+      "new_password": "",
+      "logout_devices": true
+    },
+    "note": "MAS 模式不提供此端点。"
+  },
+  {
+    "group": "用户",
+    "id": "isAdmin",
+    "label": "查询管理员权限",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/admin",
+    "query": {},
+    "note": "MAS 模式不提供此端点。修改权限请使用创建 / 修改用户。"
+  },
+  {
+    "group": "用户",
+    "id": "userRooms",
+    "label": "已加入房间",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/joined_rooms",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "memberships",
+    "label": "房间成员关系",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/memberships",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "pushers",
+    "label": "推送配置",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/pushers",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "accountData",
+    "label": "账户数据",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/accountdata",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "whois",
+    "label": "登录连接信息",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/whois/{user_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "suspend",
+    "label": "暂停 / 恢复用户",
+    "method": "PUT",
+    "path": "/_synapse/admin/v1/suspend/{user_id}",
+    "query": {},
+    "body": {
+      "suspend": true
+    },
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "loginAs",
+    "label": "生成用户访问令牌",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/users/{user_id}/login",
+    "query": {},
+    "body": {},
+    "note": "敏感操作：返回可代用户操作的令牌。MAS 模式不可用。请勿分享结果。"
+  },
+  {
+    "group": "用户",
+    "id": "redactUser",
+    "label": "批量撤回用户事件",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/user/{user_id}/redact",
+    "query": {},
+    "body": {
+      "rooms": [],
+      "reason": "Administrator moderation"
+    },
+    "note": "异步任务；rooms 为空会撤回用户在所有已加入或被封禁房间中的事件，请谨慎指定范围。"
+  },
+  {
+    "group": "用户",
+    "id": "redactStatus",
+    "label": "撤回任务状态",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/user/redact_status/{redact_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "crossSigning",
+    "label": "允许替换交叉签名密钥",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/users/{user_id}/_allow_cross_signing_replacement_without_uia",
+    "query": {},
+    "body": {},
+    "note": "临时放开交互认证限制，请确认用户身份。"
+  },
+  {
+    "group": "用户",
+    "id": "threepid",
+    "label": "通过邮箱查询用户",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/threepid/{medium}/users/{address}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "username",
+    "label": "用户名可用性",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/username_available",
+    "query": {
+      "username": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "nonce",
+    "label": "获取共享密钥注册 nonce",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/register",
+    "query": {},
+    "note": "注册表单使用管理员创建用户，无需共享密钥。此端点供已有 HMAC 注册流程使用。MAS 模式不可用。"
+  },
+  {
+    "group": "用户",
+    "id": "register",
+    "label": "共享密钥 HMAC 注册",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/register",
+    "query": {},
+    "body": {
+      "nonce": "",
+      "username": "",
+      "password": "",
+      "admin": false,
+      "mac": ""
+    },
+    "note": "需要在外部安全计算 HMAC；不要将 registration_shared_secret 填入系统。MAS 模式不可用。"
+  },
+  {
+    "group": "设备",
+    "id": "devices",
+    "label": "用户设备",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/users/{user_id}/devices",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "设备",
+    "id": "createDevice",
+    "label": "创建设备",
+    "method": "POST",
+    "path": "/_synapse/admin/v2/users/{user_id}/devices",
+    "query": {},
+    "body": {
+      "device_id": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "设备",
+    "id": "device",
+    "label": "设备详情",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/users/{user_id}/devices/{device_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "设备",
+    "id": "saveDevice",
+    "label": "重命名设备",
+    "method": "PUT",
+    "path": "/_synapse/admin/v2/users/{user_id}/devices/{device_id}",
+    "query": {},
+    "body": {
+      "display_name": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "设备",
+    "id": "deleteDevice",
+    "label": "删除设备",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v2/users/{user_id}/devices/{device_id}",
+    "query": {},
+    "body": {},
+    "note": ""
+  },
+  {
+    "group": "设备",
+    "id": "deleteDevices",
+    "label": "批量删除设备",
+    "method": "POST",
+    "path": "/_synapse/admin/v2/users/{user_id}/delete_devices",
+    "query": {},
+    "body": {
+      "devices": []
+    },
+    "note": ""
+  },
+  {
+    "group": "注册令牌",
+    "id": "tokens",
+    "label": "注册令牌列表",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/registration_tokens",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "注册令牌",
+    "id": "createToken",
+    "label": "创建注册令牌",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/registration_tokens/new",
+    "query": {},
+    "body": {
+      "length": 24,
+      "uses_allowed": 1,
+      "expiry_time": null
+    },
+    "note": ""
+  },
+  {
+    "group": "注册令牌",
+    "id": "token",
+    "label": "注册令牌详情",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/registration_tokens/{token}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "注册令牌",
+    "id": "saveToken",
+    "label": "修改注册令牌",
+    "method": "PUT",
+    "path": "/_synapse/admin/v1/registration_tokens/{token}",
+    "query": {},
+    "body": {
+      "uses_allowed": null,
+      "expiry_time": null
+    },
+    "note": ""
+  },
+  {
+    "group": "注册令牌",
+    "id": "deleteToken",
+    "label": "删除注册令牌",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v1/registration_tokens/{token}",
+    "query": {},
+    "body": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "rooms",
+    "label": "房间列表",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms",
+    "query": {
+      "from": 0,
+      "limit": 20,
+      "search_term": "",
+      "order_by": "joined_members",
+      "dir": "b"
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "room",
+    "label": "房间详情",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "deleteRoom",
+    "label": "删除房间（同步）",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v1/rooms/{room_id}",
+    "query": {},
+    "body": {
+      "block": true,
+      "purge": true
+    },
+    "note": "移出本地成员并清理本地存储，不会删除其他服务器的副本。"
+  },
+  {
+    "group": "房间",
+    "id": "roomMembers",
+    "label": "房间成员",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/members",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "roomState",
+    "label": "房间状态",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/state",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "roomMessages",
+    "label": "房间事件",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/messages",
+    "query": {
+      "dir": "b",
+      "limit": 20
+    },
+    "note": "端到端加密事件仅返回密文，本系统不能解密。"
+  },
+  {
+    "group": "房间",
+    "id": "context",
+    "label": "事件上下文",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/context/{event_id}",
+    "query": {
+      "limit": 10
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "timestampEvent",
+    "label": "按时间定位事件",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/timestamp_to_event",
+    "query": {
+      "ts": 0,
+      "dir": "b"
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "hierarchy",
+    "label": "空间层级",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/hierarchy",
+    "query": {
+      "limit": 20
+    },
+    "note": "仅本地已知房间。"
+  },
+  {
+    "group": "房间",
+    "id": "roomBlock",
+    "label": "封禁状态",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/block",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "blockRoom",
+    "label": "设置房间封禁",
+    "method": "PUT",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/block",
+    "query": {},
+    "body": {
+      "block": true
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "makeRoomAdmin",
+    "label": "设置房间管理员",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/make_room_admin",
+    "query": {},
+    "body": {
+      "user_id": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "extremities",
+    "label": "房间前向极值",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/forward_extremities",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "deleteExtremities",
+    "label": "清理前向极值",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v1/rooms/{room_id}/forward_extremities",
+    "query": {},
+    "body": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "deleteRoomAsync",
+    "label": "删除房间（异步）",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v2/rooms/{room_id}",
+    "query": {},
+    "body": {
+      "block": true,
+      "purge": true
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "deleteStatus",
+    "label": "删除任务状态",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/rooms/delete_status/{delete_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "roomDeleteStatus",
+    "label": "房间删除任务",
+    "method": "GET",
+    "path": "/_synapse/admin/v2/rooms/{room_id}/delete_status",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "joinRoom",
+    "label": "将用户加入房间",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/join/{room_id_or_alias}",
+    "query": {},
+    "body": {
+      "user_id": ""
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "purgeHistory",
+    "label": "清理房间历史",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/purge_history/{room_id}",
+    "query": {},
+    "body": {
+      "purge_up_to_ts": 0,
+      "delete_local_events": false
+    },
+    "note": ""
+  },
+  {
+    "group": "房间",
+    "id": "purgeStatus",
+    "label": "历史清理状态",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/purge_history_status/{purge_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "媒体",
+    "id": "media",
+    "label": "媒体元数据",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/media/{server_name}/{media_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "媒体",
+    "id": "deleteMedia",
+    "label": "删除单个本地媒体",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v1/media/{server_name}/{media_id}",
+    "query": {},
+    "body": {},
+    "note": ""
+  },
+  {
+    "group": "媒体",
+    "id": "deleteOldMedia",
+    "label": "按时间与大小删除媒体",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/media/delete",
+    "query": {
+      "before_ts": 0,
+      "size_gt": 0,
+      "keep_profiles": true
+    },
+    "body": {},
+    "note": "时间按文件修改时间计算。默认保留头像。此 API 没有 dry-run；调用会立即删除。"
+  },
+  {
+    "group": "媒体",
+    "id": "purgeRemote",
+    "label": "清理远程媒体缓存",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/purge_media_cache",
+    "query": {
+      "before_ts": 0
+    },
+    "body": {},
+    "note": "按文件修改时间，非最后访问时间。删除后可能从远程重新下载。"
+  },
+  {
+    "group": "媒体",
+    "id": "userMedia",
+    "label": "用户媒体列表",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/users/{user_id}/media",
+    "query": {
+      "from": 0,
+      "limit": 20
+    },
+    "note": ""
+  },
+  {
+    "group": "媒体",
+    "id": "deleteUserMedia",
+    "label": "删除一页用户媒体",
+    "method": "DELETE",
+    "path": "/_synapse/admin/v1/users/{user_id}/media",
+    "query": {
+      "from": 0,
+      "limit": 100
+    },
+    "body": {},
+    "note": "每次仅删除一页。继续删除应保持 from=0，因为剩余数据会重新排序。"
+  },
+  {
+    "group": "媒体",
+    "id": "roomMedia",
+    "label": "房间引用媒体",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/room/{room_id}/media",
+    "query": {},
+    "note": "只包含未加密事件中的媒体引用。"
+  },
+  {
+    "group": "媒体",
+    "id": "mediaStats",
+    "label": "用户媒体统计",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/statistics/users/media",
+    "query": {
+      "from": 0,
+      "limit": 20,
+      "order_by": "media_length",
+      "dir": "b"
+    },
+    "note": ""
+  },
+  {
+    "group": "联邦",
+    "id": "destinations",
+    "label": "联邦目标",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/federation/destinations",
+    "query": {
+      "from": 0,
+      "limit": 20
+    },
+    "note": ""
+  },
+  {
+    "group": "联邦",
+    "id": "destination",
+    "label": "联邦目标详情",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/federation/destinations/{destination}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "联邦",
+    "id": "destinationRooms",
+    "label": "共享房间",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/federation/destinations/{destination}/rooms",
+    "query": {
+      "from": 0,
+      "limit": 20
+    },
+    "note": ""
+  },
+  {
+    "group": "联邦",
+    "id": "resetConnection",
+    "label": "重试联邦连接",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/federation/destinations/{destination}/reset_connection",
+    "query": {},
+    "body": {},
+    "note": ""
+  },
+  {
+    "group": "服务器",
+    "id": "version",
+    "label": "服务器版本",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/server_version",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "服务器",
+    "id": "notice",
+    "label": "发送服务器通知",
+    "method": "POST",
+    "path": "/_synapse/admin/v1/send_server_notice",
+    "query": {},
+    "body": {
+      "user_id": "",
+      "content": {
+        "msgtype": "m.text",
+        "body": ""
+      }
+    },
+    "note": ""
+  },
+  {
+    "group": "服务器",
+    "id": "noticeTxn",
+    "label": "发送幂等服务器通知",
+    "method": "PUT",
+    "path": "/_synapse/admin/v1/send_server_notice/{txn_id}",
+    "query": {},
+    "body": {
+      "user_id": "",
+      "content": {
+        "msgtype": "m.text",
+        "body": ""
+      }
+    },
+    "note": ""
+  },
+  {
+    "group": "服务器",
+    "id": "tasks",
+    "label": "后台任务",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/scheduled_tasks",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "服务器",
+    "id": "event",
+    "label": "获取原始事件",
+    "method": "GET",
+    "path": "/_synapse/admin/v1/fetch_event/{event_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "nativeLocked",
+    "label": "原生账号锁定状态",
+    "method": "GET",
+    "path": "/_matrix/client/v1/admin/lock/{user_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "nativeLock",
+    "label": "原生锁定 / 解锁账号",
+    "method": "PUT",
+    "path": "/_matrix/client/v1/admin/lock/{user_id}",
+    "query": {},
+    "body": {
+      "locked": true
+    },
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "nativeSuspended",
+    "label": "原生账号暂停状态",
+    "method": "GET",
+    "path": "/_matrix/client/v1/admin/suspend/{user_id}",
+    "query": {},
+    "note": ""
+  },
+  {
+    "group": "用户",
+    "id": "nativeSuspend",
+    "label": "原生暂停 / 恢复账号",
+    "method": "PUT",
+    "path": "/_matrix/client/v1/admin/suspend/{user_id}",
+    "query": {},
+    "body": {
+      "suspended": true
+    },
+    "note": ""
+  }
+]

@@ -8,6 +8,7 @@ import {
   Globe2,
   HardDrive,
   KeyRound,
+  LockKeyhole,
   LayoutDashboard,
   LayoutGrid,
   LoaderCircle,
@@ -152,7 +153,7 @@ export default function App() {
           </a>
           <div className="version">
             <span>tuwunel admin</span>
-            <Badge>v1.0</Badge>
+            <Badge>v1.1</Badge>
           </div>
         </div>
       </aside>
@@ -238,6 +239,28 @@ export default function App() {
 }
 function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   const config = useLoad(() => request("/config"));
+  const [homeserver, setHomeserver] = useState("");
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    if (!config.data) return;
+    let saved = "";
+    try {
+      saved = localStorage.getItem("tuwunel-admin.pinned-server") || "";
+    } catch {
+      /* Storage may be disabled. */
+    }
+    const allowed = config.data.allowedHomeservers || [];
+    if (
+      config.data.locked ||
+      (saved &&
+        allowed.length &&
+        !allowed.includes(saved) &&
+        saved !== config.data.homeserver)
+    )
+      saved = "";
+    setHomeserver(saved || config.data.homeserver || "");
+    setPinned(Boolean(saved));
+  }, [config.data]);
   const [mode, setMode] = useState("password"),
     [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
@@ -297,10 +320,86 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
           </span>
           <h2>登录管理中心</h2>
           <p>使用 Matrix 服务器管理员账号继续</p>
-          <div className="login-target">
-            <Globe2 size={17} />
-            <span>{config.data?.homeserver || "尚未配置服务器地址"}</span>
-          </div>
+          <label className="field server-field">
+            <span>
+              Matrix 服务器地址{" "}
+              {config.data?.locked && (
+                <Badge tone="purple">
+                  <LockKeyhole size={11} />
+                  部署配置已锁定
+                </Badge>
+              )}
+            </span>
+            <div
+              className={`server-input ${config.data?.locked || pinned ? "locked" : ""}`}
+            >
+              {config.data?.locked || pinned ? (
+                <LockKeyhole size={17} />
+              ) : (
+                <Globe2 size={17} />
+              )}
+              <input
+                aria-label="Matrix 服务器地址"
+                type="url"
+                value={homeserver}
+                readOnly={Boolean(config.data?.locked || pinned)}
+                placeholder="https://matrix.example.com"
+                autoComplete="url"
+                list="allowed-servers"
+                onChange={(e) => {
+                  setHomeserver(e.target.value);
+                  setError("");
+                }}
+              />
+            </div>
+            <datalist id="allowed-servers">
+              {config.data?.allowedHomeservers?.map((server: string) => (
+                <option key={server} value={server} />
+              ))}
+            </datalist>
+            <small>
+              {config.data?.locked
+                ? "此部署只允许连接上方服务器，地址由配置文件管理。"
+                : "输入完整的服务器地址。未在部署配置中列出的地址仅支持公网 HTTPS。"}
+            </small>
+          </label>
+          {!config.data?.locked && (
+            <label className="field check-field server-pin">
+              <input
+                type="checkbox"
+                checked={pinned}
+                disabled={!homeserver.trim()}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  try {
+                    if (checked) {
+                      const url = new URL(homeserver.trim());
+                      if (
+                        !["https:", "http:"].includes(url.protocol) ||
+                        url.username ||
+                        url.password ||
+                        url.pathname !== "/" ||
+                        url.search ||
+                        url.hash
+                      )
+                        throw new Error("请输入不含路径或凭据的完整服务器地址");
+                      localStorage.setItem(
+                        "tuwunel-admin.pinned-server",
+                        url.origin,
+                      );
+                      setHomeserver(url.origin);
+                    } else
+                      localStorage.removeItem("tuwunel-admin.pinned-server");
+                    setPinned(checked);
+                    setError("");
+                  } catch (e) {
+                    setError((e as Error).message || "无法保存服务器地址");
+                  }
+                }}
+              />
+              <span>记住并锁定此地址（当前浏览器）</span>
+            </label>
+          )}
           <div className="tabs">
             <button
               className={mode === "password" ? "active" : ""}
@@ -325,8 +424,8 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
                   "/login",
                   "POST",
                   mode === "password"
-                    ? { username, password }
-                    : { accessToken: token },
+                    ? { username, password, homeserver }
+                    : { accessToken: token, homeserver },
                 );
                 setPassword("");
                 setToken("");
@@ -381,14 +480,14 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
             <ErrorBox error={error || config.error} />
             {config.data && !config.data.configured && (
               <p className="notice">
-                部署时设置 MATRIX_HOMESERVER_URL
-                环境变量并重启容器，即可连接你的服务器。
+                请在 config.toml 中设置 matrix.homeserver，或关闭 matrix.locked
+                以允许输入服务器地址。
               </p>
             )}
             <Button
               kind="primary login-submit"
               type="submit"
-              disabled={busy || !config.data?.configured}
+              disabled={busy || !config.data?.configured || !homeserver.trim()}
             >
               {busy ? (
                 <LoaderCircle size={17} className="spin" />
@@ -414,7 +513,7 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
             <ExternalLink size={13} />
           </a>
         </div>
-        <div className="login-version">Tuwunel Admin 1.0.0</div>
+        <div className="login-version">Tuwunel Admin 1.1.0</div>
       </div>
     </div>
   );

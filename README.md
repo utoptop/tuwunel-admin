@@ -1,60 +1,92 @@
 # Tuwunel Admin
 
-中文 Tuwunel / Matrix 服务器管理中心。使用真实 Matrix 管理员账号或 Access Token 登录，通过 Tuwunel 已实现的管理 API 操作用户、房间、媒体与联邦连接。
+中文 Tuwunel / Matrix 管理中心。**Rust + Tokio + Axum 后端，React / TypeScript 前端**。生产镜像不再需要 Node.js，所有运行设置通过 `config.toml` 管理，不读取 `.env`。
 
-**镜像：`utoptop/tuwunel-admin:1.0`** · 支持 `linux/amd64` / `linux/arm64` · MIT License
+当前版本 **1.1.0**；双架构镜像 `utoptop/tuwunel-admin:1.1`，同时更新原约定的 `:1.0` 标签。支持 `linux/amd64` / `linux/arm64`。MIT License。
 
-![管理中心概览（独立测试服务器数据）](docs/dashboard.jpg)
+## 本次改进
 
-## 功能
+- 后端迁移到 Rust，异步 HTTP、连接池复用、限量读取上游响应；磁盘持久化放入阻塞任务池，避免阻塞异步工作线程。
+- TOML 配置文件管理监听地址、公开 URL、Cookie、Matrix 地址规则、数据目录、会话和清理计划参数。未知配置字段或无效配置会阻止启动。
+- 登录页支持部署级锁定地址、自定义输入，以及当前浏览器记住并锁定地址；浏览器只保存服务器地址，不保存账号密码或令牌。
+- 自定义服务器的会话、审计和媒体策略按服务器 origin 隔离。不同服务器即使返回相同 Matrix ID，也不能读取对方的审计或使用对方的清理凭据。
+- 旧 Node 版数据卷自动迁移，保留原 AES-256-GCM 密钥与凭据格式，首次迁移备份为 `state.v1.backup.json`。
 
-| 模块 | 功能 |
-| --- | --- |
-| 用户 | 搜索与分页、创建、资料与管理员权限、重置密码、注销设备、锁定/解锁、暂停/恢复、停用、停用并擦除、重新启用 |
-| 用户详情 | 加入房间、设备管理、上传媒体、连接信息、成员关系、账户数据 |
-| 房间 | 搜索、成员/状态/事件/媒体查询、加入成员、授予房间管理员、封禁、清理历史、异步删除与结果查询 |
-| 媒体 | 用户存储排行、MXC 元数据、单个删除、按用户分页删除、按时间/大小清理、远程缓存清理 |
-| 生命周期 | 本地与远程保留天数、最小大小、头像保留、执行间隔、立即执行、最近结果、重启后恢复计划 |
-| 注册与联邦 | 注册令牌创建/修改/删除、连接状态、共享房间、重试连接 |
-| 高级 API | 73 个操作模板：69 个 Synapse 兼容操作，加 4 个 Matrix 原生锁定/暂停操作；支持路径参数、查询 JSON 与正文 JSON |
-| 系统 | 后台管理任务、服务器通知、操作审计、响应式中文界面 |
+![部署锁定登录页](docs/login-locked.jpg)
 
-### 兼容性与真实语义
-
-实现依据：[Tuwunel 官方管理 API 文档](https://matrix-construct.github.io/tuwunel/development/compliance/synapse-admin.html) 与 [官方源码 `2a0ae4be1c7f036714cecb91edd9247cf06c09d0`](https://github.com/matrix-construct/tuwunel/tree/2a0ae4be1c7f036714cecb91edd9247cf06c09d0)。已在官方 `jevolk/tuwunel:main` 的 Tuwunel 2.0.0 上完成真实集成测试，镜像摘要见 [测试记录](docs/TESTING.md)。早期版本或不同认证模式可能缺少部分端点，界面会显示上游错误，不会把不支持的操作报告为成功。
-
-- **用户删除**：调用 `deactivate` 并设置 `erase=true`。停用、注销设备并擦除资料，但不物理删除 Matrix ID，不删除所有远端副本，也不等于批量撤回消息。需要撤回时使用高级 API 中的用户事件撤回操作。
-- **加密房间**：可以查询服务器存储的事件；端到端加密消息仍是密文，系统不持有解密密钥。
-- **媒体时间**：Tuwunel 按存储文件修改时间计算，不是最后访问时间。媒体清理 API 没有 dry-run。头像保留开关仅适用于本地清理。
-- **MAS / SSO**：使用已有客户端的管理员 Access Token 登录。密码重置、注册令牌、共享密钥注册、用户模拟登录等端点在 MAS 模式下不可用；不会尝试绕过外部认证系统。
-- **上游限制**：媒体隔离/保护、举报管理等官方未实现功能不提供虚假按钮。`user_type`、`external_ids`、`approved` 等上游忽略的字段不作为已支持能力。用户创建时间为上游 `0` 占位值，不显示为真实日期。
-- **不是 Tuwunel 配置文件编辑器**：数据库备份、TLS、联邦总开关和服务器进程配置仍由部署环境管理。所有界面数据来自真实上游，程序没有演示数据模式。
-
-## Docker Compose 部署
+## 部署
 
 ```bash
 git clone https://github.com/utoptop/tuwunel-admin.git
 cd tuwunel-admin
-cp .env.example .env
-# 编辑 .env：填写 Matrix 地址、管理站点访问地址及 Cookie 设置
+cp config.example.toml config.toml
+# 按下方示例编辑 config.toml
 docker compose up -d
 ```
 
-本机访问 `http://localhost:8080`。默认仅监听 `127.0.0.1`；通过反向代理提供远程 HTTPS 访问。
+Compose 只读挂载 `config.toml`，持久化 `/app/data`，默认绑定宿主机 `127.0.0.1:8080`。更改端口映射请编辑 `compose.yaml`，不使用 `.env`。服务器启动时读取配置，更改后运行 `docker compose restart`。
 
-HTTPS 部署 `.env` 示例：
+### 固定并锁定 Matrix 服务器
 
-```dotenv
-MATRIX_HOMESERVER_URL=https://matrix.example.com
-PUBLIC_URL=https://admin.example.com
-COOKIE_SECURE=true
-PORT=8080
-BIND_ADDRESS=127.0.0.1
+```toml
+[server]
+listen = "0.0.0.0:8080"
+public_url = "http://localhost:8080"
+cookie_secure = false
+static_dir = "./dist"
+
+[matrix]
+homeserver = "https://matrix.example.com"
+locked = true
+allowed_homeservers = []
+
+[storage]
+data_dir = "./data"
 ```
 
-`MATRIX_HOMESERVER_URL` 必须是上游实际监听地址，不一定与 Matrix ID 的域名相同。只接受 HTTP(S) origin，不包含路径或凭据。后端访问上游，无需给浏览器配置 Matrix CORS。
+登录页展示只读地址及「部署配置已锁定」标识。后端也拒绝传入其他地址，修改浏览器 HTML 或直接调用登录 API 无法绕过。
 
-Caddy 示例（Caddy 运行在同一宿主机时）：
+上游是 Docker 内网服务时，可以直接配置 `homeserver = "http://tuwunel:8008"`，并将两个容器加入同一网络。Matrix 地址应是实际客户端 API 的 origin，不一定等于 Matrix ID 中的域名。
+
+### 允许自定义输入服务器
+
+```toml
+[matrix]
+locked = false
+homeserver = "https://matrix.example.com" # 可留空；非空时作为默认地址
+allowed_homeservers = []
+```
+
+用户可在登录页输入完整地址。勾选「记住并锁定此地址（当前浏览器）」会将地址保存到浏览器并锁定输入框，取消勾选即可编辑。这是方便使用的本地偏好，不能替代部署级锁定。
+
+未在配置中指定的自定义地址仅允许公网 HTTPS：连接时 DNS 解析结果必须全部是公网 IP；拒绝回环、私网、链路本地、保留地址及 IP 映射绕过，不跟随重定向，不继承系统代理。这样自定义输入不会成为任意内网代理。
+
+如需限定可选服务器或使用内网 HTTP，明确列入配置：
+
+```toml
+[matrix]
+locked = false
+homeserver = "https://matrix.example.com"
+allowed_homeservers = [
+  "https://matrix.example.com",
+  "https://chat.example.org",
+  "http://tuwunel:8008"
+]
+```
+
+非空列表将限制登录目标为这些地址以及默认 `homeserver`。显式配置的目标受到部署者信任，可以使用内网地址和 HTTP；不要将不受信任的域名加入此列表。每个地址独立绑定会话和策略，登录后不能通过管理请求更换上游。
+
+### HTTPS 反向代理
+
+```toml
+[server]
+listen = "0.0.0.0:8080"
+public_url = "https://admin.example.com"
+cookie_secure = true
+static_dir = "./dist"
+```
+
+Caddy 在同一宿主机运行时：
 
 ```caddyfile
 admin.example.com {
@@ -62,92 +94,111 @@ admin.example.com {
 }
 ```
 
-若 Tuwunel 与管理系统位于同一个 Docker 网络，可使用 `http://tuwunel:8008` 作为上游，并将两个服务连接到该网络。容器中的 `localhost` 指向容器自身。Docker Desktop 访问宿主机可使用 `host.docker.internal`。
+`public_url` 必须与浏览器实际访问的协议、域名、端口一致；HTTPS 必须配合 `cookie_secure = true`。Matrix 请求从 Rust 后端发出，无需给浏览器配置上游 CORS。后端始终验证 TLS 证书。
 
-不使用 Compose：
+## 功能
 
-```bash
-docker run -d --name tuwunel-admin --restart unless-stopped \
-  -p 127.0.0.1:8080:8080 \
-  -e MATRIX_HOMESERVER_URL=https://matrix.example.com \
-  -e PUBLIC_URL=http://localhost:8080 \
-  -v tuwunel-admin-data:/app/data \
-  utoptop/tuwunel-admin:1.0
-```
+| 模块 | 功能 |
+| --- | --- |
+| 用户 | 搜索分页、创建、修改资料/权限/密码、锁定、暂停、停用并擦除、重新启用 |
+| 用户详情 | 加入的房间、设备增删与重命名、媒体、连接信息、成员关系、账户数据 |
+| 房间 | 成员、状态、事件、媒体；加入成员、设置管理员、封禁、清理历史、异步删除 |
+| 媒体 | 存储排行、MXC 查询、单个/按用户/按时间大小删除、远程缓存清理 |
+| 生命周期 | 每个服务器独立的保留天数、间隔、头像保护、加密凭据、重启恢复、运行结果 |
+| 注册与联邦 | 注册令牌管理、联邦目标/共享房间/重试、服务器通知 |
+| 系统 | 后台任务、审计、73 个高级 API 操作、中文响应式 UI |
 
-## 媒体生命周期
+API 映射保存在 [backend/catalog.json](backend/catalog.json)，完整清单见 [docs/API.md](docs/API.md)。基于 [Tuwunel 官方文档](https://matrix-construct.github.io/tuwunel/development/compliance/synapse-admin.html) 与 [已核对的官方源码](https://github.com/matrix-construct/tuwunel/tree/2a0ae4be1c7f036714cecb91edd9247cf06c09d0)。已完成官方 Tuwunel 2.0.0 真实联调；旧服务器可能缺少部分 API，系统会显示实际错误。
 
-1. 在「媒体与存储 → 生命周期」设置本地保留天数、远程缓存保留天数、清理间隔和头像保留选项。
-2. 配置一个**独立的管理员 Access Token**。不要使用即将退出的浏览器会话令牌；计划与网页登录令牌分开管理。可以通过独立 Matrix 客户端会话获取，或在高级 API 中有意识地使用「生成用户访问令牌」并设置 `valid_until_ms`。后者在 MAS 模式下不可用。
-3. 开启并确认保存后，首次执行在一个配置间隔之后。可手动「立即执行」已保存策略。
-4. 管理容器每分钟检查到期任务。重启后恢复计划，逾期任务在下一次检查时执行。失败也会保存状态和下次执行时间；若本地成功、远程失败，会保留部分完成的计数。
+**实际语义：**
 
-计划运行前重新验证令牌的管理员权限。令牌过期、撤销或失去管理员权限后清理会失败；更新凭据即可恢复。更换上游地址后必须重新保存策略，系统不会拿旧凭据清理新服务器。停止容器会暂停计划。
+- 删除用户采用停用和 `erase=true`，不物理删除 Matrix ID，不删除其他服务器副本；撤回事件需单独执行。
+- 加密房间事件仍是密文，管理系统没有解密密钥。
+- 媒体清理按存储文件修改时间，不是最后访问时间；没有 dry-run；本地删除会影响消息附件。
+- MAS / SSO 使用已有客户端的管理员 Access Token 登录。MAS 不提供的密码重置、注册令牌等操作不能通过本系统绕过。
+- 媒体隔离、举报等上游未实现的 API 不提供虚假实现。本系统也不替代 Tuwunel 原生配置、备份或进程管理。
 
-这是管理系统的定时任务，**不修改 Tuwunel 原生配置**。仅支持一个管理进程/实例共享一个数据卷，不支持多个副本同时调度。
+## 配置项
 
-## 配置与数据
+完整注释见 [config.example.toml](config.example.toml)。相对路径以配置文件所在目录为基准。程序支持 `--config /path/config.toml`、`--health-check`、`--version`，运行时不从环境变量读取设置。
 
-| 环境变量 | 默认值 | 说明 |
+| 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `MATRIX_HOMESERVER_URL` | 无 | 固定上游，必须配置；浏览器不能指定任意代理目标 |
-| `PUBLIC_URL` | 当前请求的 origin | 建议明确配置，与浏览器地址完全一致，用于来源校验 |
-| `COOKIE_SECURE` | `false` | HTTPS 部署设为 `true` |
-| `PORT` | `8080` | 服务监听端口；Compose 容器内部固定 8080，变量控制宿主映射 |
-| `HOST` | `0.0.0.0` | Node 监听地址 |
-| `DATA_DIR` | `./data` / 镜像内 `/app/data` | 策略与审计持久化目录 |
-| `ENCRYPTION_KEY` | 自动生成 | 可选，32 字节随机值的 base64，直接运行时传入；Compose 默认使用卷内自动密钥 |
+| `server.listen` | `0.0.0.0:8080` | HTTP 监听地址 |
+| `server.public_url` | `http://localhost:8080` | Origin/CSRF 校验基准 |
+| `server.cookie_secure` | `false` | HTTPS 时必须为 true |
+| `server.static_dir` | `dist` | 前端构建目录 |
+| `matrix.homeserver` | 空 | 默认或锁定的上游地址 |
+| `matrix.locked` | `false` | 部署级锁定 |
+| `matrix.allowed_homeservers` | `[]` | 允许/信任的精确 origin 列表 |
+| `storage.data_dir` | `data` | 策略、审计、密钥目录 |
+| `storage.encryption_key_file` | 空 | 可选的外部 32 字节原始密钥文件 |
+| `limits.session_hours` | `12` | 会话寿命，1–168 小时 |
+| `limits.login_attempts` | `10` | 每个直接连接 IP 的登录尝试上限 |
+| `limits.login_window_seconds` | `600` | 登录限速窗口 |
+| `limits.max_sessions` | `1024` | 活跃会话上限 |
+| `limits.request_timeout_seconds` | `30` | 单次 Matrix 请求超时 |
+| `limits.max_response_bytes` | `8388608` | Matrix 响应大小上限 |
+| `scheduler.enabled` | `true` | 是否运行已保存的自动清理计划 |
+| `scheduler.poll_seconds` | `60` | 到期任务检查间隔 |
 
-数据卷包含 `state.json`（策略、最近 2,000 条审计）和 `encryption.key`。计划令牌采用 AES-256-GCM 加密；本地文件权限为 0600。**备份和恢复必须包含两个文件**。默认密钥与密文位于同一受保护卷中，拿到整个卷即可解密；需要分离密钥时用部署平台的 secret 管理传入 `ENCRYPTION_KEY`，并将其纳入独立备份。不要直接替换密钥后继续使用旧密文；先停用计划并重新保存凭据。
+请求体上限 128 KiB。写操作需要 Origin、CSRF 和显式确认；只有固定目录中的 API 能被代理。异步 Rust 客户端复用连接池，每次读取上游响应均限制大小和时间。详情见 [测试与性能说明](docs/TESTING.md)。
 
-网页登录会话只保存在内存，12 小时过期，重启需重新登录。Cookie 为 HttpOnly / SameSite=Strict，写请求检查 Origin 和 CSRF。网页登录产生的 Matrix 设备令牌在正常退出时注销；导入令牌退出时仅清除本地会话。进程异常停止不会自动注销此前创建的 Matrix 设备，可在客户端/设备管理中清理。密码不持久化，令牌不放入浏览器 LocalStorage。
+## 媒体生命周期与持久化
 
-管理接口按服务端操作目录白名单转发，禁止任意 URL、路径穿越、重定向和查询参数携带凭据。请求体上限 128 KiB，上游响应上限 8 MiB，超时 30 秒；大数据查询应使用分页。长任务请使用异步 API。登录失败限速为每个直接连接 IP 十分钟内十次，反向代理后的客户端共享代理 IP 的额度。
+登录目标服务器后，在「媒体与存储 → 生命周期」配置保留规则和一个独立的管理员 Access Token。计划不依赖浏览器会话；首次执行在一个配置间隔后，也可立即执行已保存规则。每次运行前验证凭据仍有管理员权限。
 
-审计仅记录本系统内的操作名称、目标、操作者、结果；不记录密码、令牌或完整请求体。它不是不可篡改的企业审计平台。
+不同服务器独立保存规则和令牌，按当前地址规则重新验证目标；切换到锁定模式后，其他服务器的旧计划将记录失败而不会访问。停用计划需先登录对应服务器。`scheduler.enabled = false` 可全局暂停自动计划，仍允许管理员手动执行。
 
-## 本地开发与验证
+同一服务器的运行和保存互斥；不同服务器至多 4 个后台任务并行。部分失败保留已完成计数。进程关闭时暂停计划，重启后执行到期任务。
 
-需要 Node.js 24+。
+数据目录包含 `state.json`、`encryption.key` 和进程锁 `state.lock`。策略凭据以 AES-256-GCM 加密，密钥默认与数据一起存放；整个卷的读取权限等于解密权限。需要密钥分离时，将 32 字节原始密钥文件只读挂载后设置 `encryption_key_file`。**必须一并备份密文和密钥**，不能直接更换密钥后期待解密旧数据。
+
+会话仅保存在内存，重启需重新登录。密码不持久化。正常退出会异步注销网页登录创建的 Matrix 令牌，导入令牌只退出本地会话；异常退出遗留的设备可在客户端或本系统设备管理中清理。
+
+审计最多保留本实例最近 2,000 条，仅向对应服务器的管理员展示，不包含密码、令牌或请求正文；不是不可篡改审计。一个数据目录只允许一个进程持有，不支持多个副本共享调度。
+
+## 从 Node 1.0 升级
+
+1. 备份原数据卷及密钥，保留旧镜像摘要以便回滚。
+2. 复制 `config.example.toml` 为 `config.toml`，将旧 `.env` 的服务器地址、公开 URL、Cookie 设置转入对应 TOML 字段。**环境变量不再生效。**
+3. 单服务器部署设置 `matrix.homeserver` 为原地址、`locked = true`。旧审计没有服务器字段，迁移时使用旧策略的地址，或配置的默认地址进行归属；两者都没有而存在旧审计时拒绝启动，防止错误归属。
+4. 更新 Compose，挂载配置文件，并继续挂载原数据卷到 `/app/data`。容器 UID 仍为 1000。
+5. 若旧部署设置了 `ENCRYPTION_KEY`，先将其 base64 解码为独立的 32 字节密钥文件，设置 `storage.encryption_key_file`；不要在聊天或日志中输出密钥。
+6. 启动后自动备份旧 JSON 并迁移到 schema 2，原密钥和加密格式不变。重新登录确认策略与审计。回滚时停止新版本并恢复备份的 `state.json` 与原密钥。
+
+## 开发和测试
+
+需要 Rust 1.93.1+，Node.js 24+ 仅用于前端构建及测试工具。
 
 ```bash
 npm ci
-cp .env.example .env
-# .env 配置 MATRIX_HOMESERVER_URL 与 PUBLIC_URL=http://localhost:5173
+cp config.example.toml config.toml
+# 开发时 server.public_url="http://localhost:5173"
+# server.listen="127.0.0.1:8080"；配置 Matrix 地址
 npm run server
 # 另一个终端
 npm run dev
 ```
 
 ```bash
-npm run check       # 本地 HTTP 集成测试 + TypeScript + Vite 生产构建
-npm start           # 提供 dist 与 API，访问配置的 PORT
-docker build -t tuwunel-admin:local .
+npm run check                # Rust 单元测试、HTTP 集成测试、前端类型检查/构建
+cargo build --release        # 优化的单一后端二进制
+npm start                    # 读取 config.toml
+cargo fmt --all -- --check
 ```
 
-真实 Tuwunel 测试流程见 [docs/TESTING.md](docs/TESTING.md)。API 清单见 [docs/API.md](docs/API.md)，测试代码不会自动连接生产服务器。
+真实联调使用独立临时 Tuwunel，操作流程见 [docs/TESTING.md](docs/TESTING.md)。生产运行目录只需 Rust 二进制、`dist/`、配置文件和可写数据目录。
 
-## 发布
+CI 验证 Rust、前端与 Docker 构建。发布工作流需要 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` Actions Secrets；发布 `:1.0` 和 `:1.1` 双架构镜像。GitHub 密钥不能替代 Docker Hub 凭据。
 
-仓库的 CI 会测试并构建容器。Docker 发布工作流需要仓库 Actions Secrets：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`，可手动触发或推送 `v1.0` / `v1.0.*` 标签，发布 `utoptop/tuwunel-admin:1.0` 双架构镜像。GitHub PAT 不能替代 Docker Hub 凭据；不要提交任何凭据或 `.env`。
+## 排错
 
-本地发布：
-
-```bash
-docker login
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t utoptop/tuwunel-admin:1.0 --push .
-```
-
-项目由 React / TypeScript / Vite 前端和 Node.js 原生 HTTP 后端组成。运行镜像不包含开发工具、源码测试、环境文件或前端依赖目录，以非 root 用户运行。升级前备份数据卷。
-
-## 常见问题
-
-- **来源不匹配**：`PUBLIC_URL` 的协议、主机名、端口必须与浏览器一致，修改后重建容器。
-- **登录失败 / API 不支持**：确认管理员身份、最新 Tuwunel 管理 API 支持情况及 MAS 模式。后端不支持通过管理房间聊天命令降级模拟 API。
-- **502 / TLS**：检查容器到上游的网络、证书链和代理。系统不关闭 TLS 验证，也不自动跟随重定向。
-- **Cookie 未保存**：仅 HTTPS 地址使用 `COOKIE_SECURE=true`。本地 HTTP 测试设为 `false`。
-- **数据卷权限**：镜像用户为 `node`（UID 1000）。使用命名卷最方便；绑定目录必须可供此用户写入。
-- **媒体统计为 0**：表示上游没有符合条件的实际媒体记录，不是整个磁盘使用量。Tuwunel 不提供 PostgreSQL 房间存储估算 API。
+- 来源不匹配：核对 `server.public_url`，修改后重启。
+- 自定义内网地址被拒绝：部署者将其精确 origin 写入 `homeserver` 或 `allowed_homeservers`；无需关闭全局地址防护。
+- 已锁定仍想换服务器：浏览器偏好锁可取消；部署锁必须编辑 TOML 后重启。
+- API 不支持：检查 Tuwunel 版本和 MAS 模式；不会通过聊天命令模拟未实现接口。
+- 容器无法写入：数据目录必须允许 UID 1000 写入。配置挂载为只读，数据卷必须可写。
+- 健康检查失败：检查配置监听端口、配置文件路径和数据卷占用。
 
 这是独立管理工具，与 Tuwunel 官方项目无隶属关系。
