@@ -79,3 +79,19 @@
 | 用户 | 原生暂停 / 恢复账号 | PUT | `/_matrix/client/v1/admin/suspend/{user_id}` |  |
 
 共享密钥注册操作接受已计算的 HMAC，不接收或持久化 registration_shared_secret。日常创建用户使用管理员 PUT users API。
+
+## 1.4 管理台扩展接口
+
+这些是面板自身的认证接口，使用服务器端会话 Cookie；POST 同时要求 Origin 与 X-CSRF-Token。它们组合上游已有 API，不假设 Tuwunel 有原生监测 API。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/rooms` | `{from, search}`，每批 20 个房间，补充头像并保留 `next_batch`、`total_rooms`；详情失败时保留房间 ID |
+| GET | `/api/media/jobs` | 当前 homeserver 的媒体任务与逐人进度 |
+| POST | `/api/media/jobs` | `{users:["@alice:example.com"], confirmation:"删除 1 位用户的全部媒体"}`，去重后 1–1000 位本地用户 |
+| POST | `/api/media/jobs/cancel` | `{id}`，停止后续处理；已经在途的上游请求可能完成 |
+| GET | `/api/observability` | 当前 homeserver 的只读采集快照、采集时间与过期状态；未配置返回 `available:false` |
+
+媒体任务每次从 `from=0&limit=100` 删除，持续到读取剩余数量为零，文件总量不设 100 个上限；最多并行 3 位用户。当前服务器只允许一个批量媒体或桥接清理任务运行。失败保留已删除计数，重试只处理仍存在的文件；退出/权限失效或服务重启会中断任务，重启不自动恢复不可逆操作。任务完成、部分失败、取消与中断均有不同状态。
+
+采集器格式与 Docker 部署参见 [服务器监测](observability.md)。注册 IP 来自可信成功注册日志，而非 whois；读取配置再次使用字段白名单过滤，不向浏览器返回秘密配置。

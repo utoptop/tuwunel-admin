@@ -52,3 +52,8 @@ detect_common = true
 # homeserver = "https://matrix.example.com"
 # name = "Telegram bot"
 # user_prefix = "@telegrambot"
+
+# 可选：运行指标 / 只读配置 / 注册 IP 审计。仅匹配当前登录服务器的采集来源可见。
+# [[observability.sources]]
+# homeserver = "https://matrix.example.com"
+# snapshot_file = "/app/observability/server.json"

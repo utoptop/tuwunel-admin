@@ -147,7 +147,7 @@ export default function Dashboard({
         {[
           ["rooms", "房间管理", "浏览房间与成员", LayoutGrid],
           ["media", "媒体与存储", "查看占用与保留策略", HardDrive],
-          ["audit", "操作审计", "追踪最近的管理变更", ShieldCheck],
+          ["monitor", "服务器监测", "运行指标、配置与注册来源", ShieldCheck],
         ].map(([key, title, text, Icon]: any) => (
           <button key={key} onClick={() => navigate(key)}>
             <Icon size={20} />
@@ -252,7 +252,7 @@ export default function Dashboard({
         </div>
         <div className="strip-right">
           <Badge tone="purple">Matrix Admin API</Badge>
-          <span>管理系统 v1.3.0</span>
+          <span>管理系统 v1.4.0</span>
         </div>
       </div>
     </>

@@ -23,22 +23,27 @@ import {
   useLoad,
 } from "./ui";
 import type { Operate } from "./UsersRooms";
+import { MediaCleanup, MediaJobs } from "./MediaJobs";
+import { useInfinite, InfiniteEnd } from "./infinite";
 
 export function MediaPage({ operate }: { operate: Operate }) {
   const [tab, setTab] = useState("stats"),
-    [from, setFrom] = useState(0),
+    [selected, setSelected] = useState<Data[]>([]),
+    [cleanup, setCleanup] = useState<Data[] | null>(null),
     [mxc, setMxc] = useState(""),
     [metadata, setMetadata] = useState<Data>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const stats = useLoad(
-    () =>
+  const stats = useInfinite(
+    (from) =>
       admin(
         "mediaStats",
         {},
         { from, limit: 20, order_by: "media_length", dir: "b" },
       ),
-    [from],
+    "users",
+    "next_token",
+    "user_id",
   );
   const params = () => {
     const match = /^mxc:\/\/([^/]+)\/([^/?#]+)$/.exec(mxc.trim());
@@ -52,7 +57,20 @@ export function MediaPage({ operate }: { operate: Operate }) {
         title="媒体与存储"
         description="了解媒体占用，配置保留周期，让存储持续保持有序。"
       >
-        <Refresh onClick={stats.reload} />
+        <Button
+          kind="danger-soft"
+          disabled={!selected.length}
+          onClick={() => setCleanup(selected)}
+        >
+          <Trash2 size={15} />
+          清理所选（{selected.length}）
+        </Button>
+        <Refresh
+          onClick={() => {
+            setSelected([]);
+            stats.reload();
+          }}
+        />
       </PageTitle>
       <div className="tabs page-tabs">
         {[
@@ -69,13 +87,53 @@ export function MediaPage({ operate }: { operate: Operate }) {
           </button>
         ))}
       </div>
+      <div className="storage-overview">
+        <div>
+          <span className="storage-overview-icon">
+            <HardDrive size={26} />
+          </span>
+          <div>
+            <span>已加载用户的媒体占用</span>
+            <strong>
+              {bytes(
+                (stats.data?.users || []).reduce(
+                  (n: number, u: Data) => n + u.media_length,
+                  0,
+                ),
+              )}
+            </strong>
+          </div>
+        </div>
+        <p>
+          集中管理存储，按需保留。
+          <br />
+          <span>勾选多位用户，一次清理全部文件。</span>
+        </p>
+      </div>
+      <MediaJobs
+        onRetry={setCleanup}
+        onComplete={() => {
+          setSelected([]);
+          stats.reload();
+        }}
+      />
+      {cleanup && (
+        <MediaCleanup
+          users={cleanup}
+          onClose={() => setCleanup(null)}
+          onStarted={() => {
+            setCleanup(null);
+            setSelected([]);
+          }}
+        />
+      )}
       {tab === "stats" ? (
         <Panel
           title="用户媒体用量"
           subtitle="按存储大小降序排列 · 统计来自服务器实际存储"
         >
           <ErrorBox error={stats.error} />
-          {stats.loading ? (
+          {stats.loading && !stats.data ? (
             <Loading />
           ) : !stats.data?.users?.length ? (
             <Empty text="暂无媒体上传记录" />
@@ -84,16 +142,47 @@ export function MediaPage({ operate }: { operate: Operate }) {
               <table>
                 <thead>
                   <tr>
+                    <th>
+                      <input
+                        type="checkbox"
+                        aria-label="选择已加载媒体用户"
+                        checked={
+                          Boolean(stats.data?.users.length) &&
+                          stats.data!.users.every((u: Data) =>
+                            selected.some((s) => s.user_id === u.user_id),
+                          )
+                        }
+                        onChange={(e) =>
+                          setSelected(e.target.checked ? stats.data!.users : [])
+                        }
+                      />
+                    </th>
                     <th>用户</th>
                     <th>文件数</th>
                     <th>存储用量</th>
-                    <th>相对占用（当前页）</th>
+                    <th>相对占用（已加载）</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {stats.data.users.map((u: Data) => (
                     <tr key={u.user_id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`选择媒体用户 ${u.user_id}`}
+                          checked={selected.some(
+                            (s) => s.user_id === u.user_id,
+                          )}
+                          onChange={(e) =>
+                            setSelected((v) =>
+                              e.target.checked
+                                ? [...v, u]
+                                : v.filter((x) => x.user_id !== u.user_id),
+                            )
+                          }
+                        />
+                      </td>
                       <td>
                         <strong>
                           {u.displayname || u.user_id.split(":")[0].slice(1)}
@@ -108,7 +197,7 @@ export function MediaPage({ operate }: { operate: Operate }) {
                         <div className="bar">
                           <span
                             style={{
-                              width: `${(u.media_length / Math.max(1, stats.data.users[0]?.media_length)) * 100}%`,
+                              width: `${(u.media_length / Math.max(1, stats.data?.users[0]?.media_length)) * 100}%`,
                             }}
                           />
                         </div>
@@ -116,23 +205,7 @@ export function MediaPage({ operate }: { operate: Operate }) {
                       <td>
                         <Button
                           kind="danger-soft"
-                          onClick={() =>
-                            operate({
-                              title: "删除用户媒体（单页）",
-                              description: `删除 ${u.user_id} 的前 100 个媒体文件。若仍有剩余，可再次执行；每次都从第 0 项开始。`,
-                              danger: true,
-                              run: () =>
-                                admin(
-                                  "deleteUserMedia",
-                                  { user_id: u.user_id },
-                                  { from: 0, limit: 100 },
-                                  {},
-                                  true,
-                                ),
-                              showResult: true,
-                              onDone: stats.reload,
-                            })
-                          }
+                          onClick={() => setCleanup([u])}
                         >
                           <Trash2 size={14} />
                           清理
@@ -144,11 +217,10 @@ export function MediaPage({ operate }: { operate: Operate }) {
               </table>
             </div>
           )}
-          <Pagination
-            from={from}
-            next={stats.data?.next_token}
+          <InfiniteEnd
+            list={stats}
+            count={stats.data?.users?.length || 0}
             total={stats.data?.total}
-            onChange={setFrom}
           />
         </Panel>
       ) : tab === "lifecycle" ? (

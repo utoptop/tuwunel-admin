@@ -1,0 +1,7 @@
+# 可选：官方 Tuwunel 镜像以 root 运行时，读取 /proc/1/io 的已验证配置。
+# 与 compose.example.yaml 一起合并。仅在需要磁盘 I/O 且默认提示不可读时启用。
+# SYS_PTRACE 不只具有读取文件的能力；权限范围限制在共享的 Tuwunel PID 命名空间。
+services:
+  tuwunel-observer:
+    user: "0:0"
+    cap_add: [SYS_PTRACE]

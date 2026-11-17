@@ -16,6 +16,7 @@ import {
 import { request, type Data, type Session } from "./api";
 import { Button, ErrorBox, useLoad } from "./ui";
 import Brand from "./Brand";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   const config = useLoad(() => request("/config"));
@@ -128,6 +129,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
     <div className="access-page">
       <header className="access-header">
         <Brand />
+        <ThemeToggle />
         <a
           href="https://matrix-construct.github.io/tuwunel/"
           target="_blank"
@@ -429,7 +431,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       </main>
       <footer className="access-footer">
         <span>
-          TUWUNEL ADMIN <b>1.3</b>
+          TUWUNEL ADMIN <b>1.4</b>
         </span>
         <span>开放连接，自主管理。</span>
       </footer>

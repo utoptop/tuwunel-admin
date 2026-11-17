@@ -1,0 +1,24 @@
+# 合并到现有 Compose；tuwunel / tuwunel-admin 必须替换为实际服务名。
+# observer UID/GID 应与 Tuwunel 一致，同时使面板 UID 1000 能读取快照。
+services:
+  tuwunel-observer:
+    image: utoptop/tuwunel-admin:1.4
+    entrypoint: ["tuwunel-observer"]
+    command: ["--config", "/etc/observer.toml"]
+    pid: "service:tuwunel"
+    network_mode: "service:tuwunel"
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+    volumes:
+      - ./observer.toml:/etc/observer.toml:ro
+      - ./tuwunel.toml:/etc/tuwunel/tuwunel.toml:ro
+      - ./registration-logs:/logs:ro
+      - ./observability:/observability
+  tuwunel-admin:
+    volumes:
+      - ./observability:/app/observability:ro

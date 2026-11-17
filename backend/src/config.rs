@@ -18,6 +18,7 @@ pub struct Config {
     pub scheduler: Scheduler,
     pub auth: AuthConfig,
     pub bridges: crate::bridges::BridgeConfig,
+    pub observability: crate::observability::Sources,
 }
 #[derive(Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -122,6 +123,11 @@ impl Config {
             )
         })?;
         let parent = path.parent().unwrap_or(Path::new("."));
+        for source in &mut config.observability.sources {
+            if source.snapshot_file.is_relative() {
+                source.snapshot_file = parent.join(&source.snapshot_file);
+            }
+        }
         for p in [
             &mut config.server.static_dir,
             &mut config.storage.data_dir,
@@ -136,6 +142,15 @@ impl Config {
     }
     pub fn validate(&mut self) -> Result<()> {
         self.bridges.validate()?;
+        let mut origins = std::collections::HashSet::new();
+        for source in &mut self.observability.sources {
+            source.homeserver = normalize(&source.homeserver)?;
+            if !origins.insert(source.homeserver.clone())
+                || source.snapshot_file.as_os_str().is_empty()
+            {
+                return Err(AppError::new(500, "监测来源地址重复或文件路径为空"));
+            }
+        }
         self.server.public_url = normalize(&self.server.public_url)?;
         if self.server.public_url.starts_with("https:") && !self.server.cookie_secure {
             return Err(AppError::new(

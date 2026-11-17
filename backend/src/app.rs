@@ -234,6 +234,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/callback", get(authentication::callback))
         .route("/api/avatar", get(crate::avatar::avatar))
         .route("/api/context", get(crate::workspace::context))
+        .route("/api/rooms", post(crate::workspace::rooms))
+        .route(
+            "/api/media/jobs",
+            get(crate::media_jobs::list).post(crate::media_jobs::start),
+        )
+        .route("/api/media/jobs/cancel", post(crate::media_jobs::cancel))
+        .route("/api/observability", get(crate::observability::read))
         .route("/api/user-rooms", post(crate::workspace::user_rooms))
         .route("/api/directory", post(crate::bridges::directory))
         .route("/api/bridges/preview", post(crate::bridges::preview))

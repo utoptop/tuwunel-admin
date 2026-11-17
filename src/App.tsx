@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Brand from "./Brand";
+import ThemeToggle from "./ThemeToggle";
 import Avatar from "./Avatar";
 import Login from "./Login";
 import {
@@ -29,6 +30,7 @@ import {
   type Operation,
 } from "./ui";
 import Dashboard from "./Dashboard";
+import Observability from "./Observability";
 import { RoomsPage, UsersPage } from "./UsersRooms";
 import { MediaPage } from "./Media";
 import {
@@ -43,6 +45,7 @@ const pages = [
   ["users", "用户管理", Users],
   ["rooms", "房间管理", LayoutGrid],
   ["media", "媒体与存储", HardDrive],
+  ["monitor", "服务器监测", Activity],
   ["tokens", "注册令牌", KeyRound],
   ["federation", "联邦连接", Globe2],
   ["tasks", "后台任务", Terminal],
@@ -128,7 +131,7 @@ export default function App() {
         <nav>
           {pages.map(([key, label, Icon], i) => (
             <div key={key}>
-              {i === 6 && <div className="nav-label secondary">系统工具</div>}
+              {i === 7 && <div className="nav-label secondary">系统工具</div>}
               <button
                 className={`nav-item ${page === key ? "active" : ""}`}
                 onClick={() => navigate(key)}
@@ -151,7 +154,7 @@ export default function App() {
           </a>
           <div className="version">
             <span>tuwunel admin</span>
-            <Badge>v1.3</Badge>
+            <Badge>v1.4</Badge>
           </div>
         </div>
       </aside>
@@ -172,6 +175,7 @@ export default function App() {
             </strong>
           </div>
           <div className="topbar-right">
+            <ThemeToggle />
             <Badge tone="green">
               <ShieldCheck size={12} />
               管理员
@@ -205,9 +209,11 @@ export default function App() {
           {page === "users" ? (
             <UsersPage session={session} operate={setOperation} />
           ) : page === "rooms" ? (
-            <RoomsPage operate={setOperation} />
+            <RoomsPage session={session} operate={setOperation} />
           ) : page === "media" ? (
             <MediaPage operate={setOperation} />
+          ) : page === "monitor" ? (
+            <Observability />
           ) : page === "tokens" ? (
             <TokensPage operate={setOperation} />
           ) : page === "federation" ? (

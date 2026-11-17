@@ -6,6 +6,8 @@ pub mod catalog;
 pub mod config;
 pub mod error;
 pub mod matrix;
+pub mod media_jobs;
+pub mod observability;
 pub mod policy;
 pub mod store;
 pub mod workspace;

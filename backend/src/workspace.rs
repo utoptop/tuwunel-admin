@@ -167,3 +167,71 @@ pub async fn token_result(
     }
     Ok(result)
 }
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct RoomsRequest {
+    from: usize,
+    search: String,
+}
+pub async fn rooms(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Payload(input): Payload<RoomsRequest>,
+) -> Result<Json<Value>> {
+    let (_, s) = auth(&state, &headers, true).await?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("from", &input.from.to_string())
+        .append_pair("limit", "20")
+        .append_pair("search_term", &input.search)
+        .append_pair("order_by", "name")
+        .finish();
+    let mut data = s
+        .matrix
+        .request(
+            &s.token,
+            Method::GET,
+            &format!("/_synapse/admin/v1/rooms?{query}"),
+            None,
+        )
+        .await?;
+    let rows = data["rooms"]
+        .as_array()
+        .ok_or_else(|| AppError::new(502, "房间列表格式无效"))?;
+    let mut tasks = tokio::task::JoinSet::new();
+    for (index, row) in rows.iter().cloned().enumerate() {
+        let state = state.clone();
+        let s = s.clone();
+        tasks.spawn(async move {
+            let mut row = row;
+            let _permit = state.avatar_limit.acquire().await;
+            if let Some(id) = row["room_id"].as_str() {
+                match s
+                    .matrix
+                    .request(
+                        &s.token,
+                        Method::GET,
+                        &format!("/_synapse/admin/v1/rooms/{}", encode(id)),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(details) => {
+                        row["avatar"] = details["avatar"].clone();
+                    }
+                    Err(e) => {
+                        row["avatarError"] = json!(e.message);
+                    }
+                }
+            }
+            (index, row)
+        });
+    }
+    let mut out = vec![];
+    while let Some(row) = tasks.join_next().await {
+        out.push(row.map_err(AppError::internal)?);
+    }
+    out.sort_by_key(|(i, _)| *i);
+    data["rooms"] = json!(out.into_iter().map(|(_, v)| v).collect::<Vec<_>>());
+    Ok(Json(data))
+}

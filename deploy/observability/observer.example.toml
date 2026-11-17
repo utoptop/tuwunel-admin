@@ -1,0 +1,11 @@
+# 只读采集器配置，不读取 .env；所有相对路径以此文件目录为基准。
+homeserver = "https://matrix.example.com" # 必须与面板登录使用的精确地址一致
+server_name = "example.com" # Matrix 用户 ID 的冒号后部分，不一定等于 HTTPS 主机名
+pid = 1 # 共享 Tuwunel 容器 PID 命名空间时通常为 1
+process_name = "tuwunel" # 必须与 /proc/<pid>/comm 一致
+proc_root = "/proc"
+interval_seconds = 5
+output_file = "/observability/server.json"
+# 可选：移除字段即可不采集相应内容。
+tuwunel_config = "/etc/tuwunel/tuwunel.toml"
+registration_log = "/logs/registration.jsonl"

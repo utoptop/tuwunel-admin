@@ -361,7 +361,7 @@ pub async fn start(
     let actor = s.user_id.clone();
     let targets = ids.clone();
     store::access(&state.store,true,move |store| {
-        if store.data.cleanup_jobs.values().any(|j|j["homeserver"]==origin && j["status"]=="running") {return Err(AppError::new(409,"此服务器已有桥接清理任务在运行"));}
+        if store.data.cleanup_jobs.values().any(|j|j["homeserver"]==origin && j["status"]=="running") || store.data.media_jobs.values().any(|j|j["homeserver"]==origin && j["status"]=="running") {return Err(AppError::new(409,"此服务器已有桥接清理任务在运行"));}
         if store.data.cleanup_jobs.len()>=20 {
             let oldest=store.data.cleanup_jobs.iter().filter(|(_,j)|j["status"]!="running").min_by_key(|(_,j)|j["created"].as_u64().unwrap_or(0)).map(|(id,_)|id.clone());
             if let Some(id)=oldest {store.data.cleanup_jobs.remove(&id);} else {return Err(AppError::new(429,"清理任务过多"));}
@@ -427,7 +427,7 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
     result["deactivated"] = json!(true);
     let path = format!("/_synapse/admin/v1/users/{}/media", encode(id));
     let mut previous = String::new();
-    for iteration in 0..10000 {
+    loop {
         let (_, s) = auth(state, headers, true).await?;
         let remaining = request(&s, Method::GET, format!("{path}?from=0&limit=1"), None).await?;
         let media = remaining["media"]
@@ -447,12 +447,6 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
             return Err(AppError::new(502, "媒体清理没有前进，请检查文件存储后重试"));
         }
         previous = first.to_owned();
-        if iteration == 9999 {
-            return Err(AppError::new(
-                409,
-                "媒体数量超过单次清理上限，请重试剩余媒体",
-            ));
-        }
         let deleted = request(
             &s,
             Method::DELETE,

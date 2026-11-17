@@ -40,6 +40,8 @@ pub struct Data {
     pub readonly_tokens: BTreeMap<String, String>,
     #[serde(default)]
     pub cleanup_jobs: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub media_jobs: BTreeMap<String, Value>,
     pub audit: Vec<Value>,
 }
 pub struct Store {
@@ -170,6 +172,14 @@ impl Store {
                 job["message"] = json!(
                     "管理进程已重启；请核对逐项结果后重新预览未完成的用户。不会自动重放删除。 "
                 );
+                migration = true;
+            }
+        }
+        for job in store.data.media_jobs.values_mut() {
+            if job["status"] == "running" {
+                job["status"] = json!("interrupted");
+                job["message"] =
+                    json!("服务已重启；已删除文件不会恢复，可重新选择未完成用户继续清理。");
                 migration = true;
             }
         }

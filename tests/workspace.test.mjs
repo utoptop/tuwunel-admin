@@ -132,6 +132,15 @@ async function fixture(t, extraConfig = () => "") {
       });
       return send({});
     }
+    if (path === "/_synapse/admin/v1/rooms")
+      return send({
+        rooms: [
+          { room_id: "!named:test", name: "测试房间" },
+          { room_id: "!gone:test", name: null },
+        ],
+        total_rooms: 42,
+        next_batch: 20,
+      });
     if (path === "/_synapse/admin/v1/rooms/!named:test")
       return send({
         name: "测试房间",
@@ -442,6 +451,14 @@ test("restart marks unfinished cleanup interrupted and never replays deletion", 
       results: [],
     },
   };
+  data.mediaJobs = {
+    unfinished: {
+      id: "unfinished",
+      homeserver: f.origin,
+      status: "running",
+      users: [{ userId: signal, status: "running", deleted: 100 }],
+    },
+  };
   await writeFile(join(directory, "state.json"), JSON.stringify(data));
   const restarted = await startRust({ homeserver: f.origin, directory });
   t.after(async () => {
@@ -452,10 +469,182 @@ test("restart marks unfinished cleanup interrupted and never replays deletion", 
     await readFile(join(directory, "state.json"), "utf8"),
   );
   assert.equal(disk.cleanupJobs.unfinished.status, "interrupted");
+  assert.equal(disk.mediaJobs.unfinished.status, "interrupted");
+  assert.equal(disk.mediaJobs.unfinished.users[0].deleted, 100);
   assert.match(disk.cleanupJobs.unfinished.message, /不会自动重放/);
   assert.ok(
     !f.calls.some(
       (c) => c.path.includes("/deactivate/") || c.method === "DELETE",
     ),
   );
+});
+
+test("media cleanup processes every batch for multiple users without deactivating accounts", async (t) => {
+  const f = await fixture(t);
+  f.media.set(
+    signal,
+    Array.from({ length: 251 }, (_, i) => "s" + i),
+  );
+  f.media.set(
+    telegram,
+    Array.from({ length: 113 }, (_, i) => "t" + i),
+  );
+  const started = await f.call("/media/jobs", "POST", {
+    users: [signal, telegram],
+    confirmation: "删除 2 位用户的全部媒体",
+  });
+  assert.equal(started.status, 200, JSON.stringify(started.data));
+  let job;
+  for (let i = 0; i < 800; i++) {
+    job = (await f.call("/media/jobs")).data.jobs.find(
+      (j) => j.id === started.data.id,
+    );
+    if (job.status !== "running") break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(job.status, "complete", JSON.stringify(job));
+  assert.deepEqual(
+    job.users.map((u) => u.deleted).sort((a, b) => a - b),
+    [113, 251],
+  );
+  assert.ok(job.users.every((u) => u.verified && u.remaining === 0));
+  assert.equal(f.media.get(signal).length, 0);
+  assert.equal(f.media.get(telegram).length, 0);
+  assert.ok(!f.calls.some((c) => c.path.includes("/deactivate/")));
+  assert.ok(
+    f.calls
+      .filter((c) => c.method === "DELETE")
+      .every((c) => c.query.from === "0" && c.query.limit === "100"),
+  );
+});
+test("media jobs enforce confirmation, local users, conflicts, cancellation and stalled progress", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (
+      await f.call("/media/jobs", "POST", {
+        users: [signal],
+        confirmation: "yes",
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await f.call("/media/jobs", "POST", {
+        users: ["@a:foreign"],
+        confirmation: "删除 1 位用户的全部媒体",
+      })
+    ).status,
+    400,
+  );
+  f.media.set(
+    signal,
+    Array.from({ length: 1000 }, (_, i) => "s" + i),
+  );
+  const start = await f.call("/media/jobs", "POST", {
+    users: [signal],
+    confirmation: "删除 1 位用户的全部媒体",
+  });
+  assert.equal(start.status, 200);
+  assert.equal(
+    (
+      await f.call("/media/jobs", "POST", {
+        users: [telegram],
+        confirmation: "删除 1 位用户的全部媒体",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (await f.call("/media/jobs/cancel", "POST", { id: start.data.id })).status,
+    200,
+  );
+  let job;
+  for (let i = 0; i < 200; i++) {
+    job = (await f.call("/media/jobs")).data.jobs.find(
+      (j) => j.id === start.data.id,
+    );
+    if (job.status !== "running") break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(job.status, "canceled");
+  assert.ok(f.media.get(signal).length > 0);
+  f.setMediaFailure(true);
+  const retry = await f.call("/media/jobs", "POST", {
+    users: [telegram],
+    confirmation: "删除 1 位用户的全部媒体",
+  });
+  for (let i = 0; i < 200; i++) {
+    job = (await f.call("/media/jobs")).data.jobs.find(
+      (j) => j.id === retry.data.id,
+    );
+    if (job.status !== "running") break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(job.status, "partial");
+  assert.match(job.users[0].error, /未删除/);
+  assert.equal((await f.client()("/media/jobs")).status, 401);
+});
+test("observability matches logged-in origin and Matrix server name and strips unapproved config", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "tuwunel-observer-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, "snapshot.json");
+  const f = await fixture(
+    t,
+    (origin) =>
+      `[[observability.sources]]\nhomeserver="${origin}"\nsnapshot_file=${JSON.stringify(file)}`,
+  );
+  const snapshot = {
+    schema: 1,
+    homeserver: f.origin,
+    server_name: "test",
+    generated_at: Date.now(),
+    metrics: null,
+    history: [],
+    configuration: {
+      server_name: "test",
+      registration_token: "NEVER-SHOW",
+      unknown: "SECRET",
+    },
+    registrations: {
+      available: false,
+      truncated: false,
+      since: null,
+      invalid_lines: 0,
+      ips: [],
+      accounts: [],
+    },
+    diagnostics: [],
+  };
+  await writeFile(file, JSON.stringify(snapshot));
+  let r = await f.call("/observability");
+  assert.equal(r.status, 200);
+  assert.equal(r.data.available, true);
+  assert.equal(r.data.stale, false);
+  assert.deepEqual(r.data.snapshot.configuration, { server_name: "test" });
+  snapshot.generated_at -= 60000;
+  await writeFile(file, JSON.stringify(snapshot));
+  assert.equal((await f.call("/observability")).data.stale, true);
+  snapshot.server_name = "different";
+  await writeFile(file, JSON.stringify(snapshot));
+  assert.equal((await f.call("/observability")).status, 502);
+  snapshot.server_name = "test";
+  snapshot.homeserver = "https://unrelated.example";
+  await writeFile(file, JSON.stringify(snapshot));
+  assert.equal((await f.call("/observability")).status, 502);
+  assert.equal((await f.client()("/observability")).status, 401);
+});
+
+test("room directory preserves pagination and retains rooms whose metadata is unavailable", async (t) => {
+  const f = await fixture(t);
+  const r = await f.call("/rooms", "POST", { from: 0, search: "test" });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.next_batch, 20);
+  assert.equal(r.data.total_rooms, 42);
+  assert.equal(r.data.rooms[0].avatar, "mxc://test/room");
+  assert.equal(r.data.rooms[1].room_id, "!gone:test");
+  assert.ok(r.data.rooms[1].avatarError);
+  const upstream = f.calls.find((c) => c.path === "/_synapse/admin/v1/rooms");
+  assert.equal(upstream.query.search_term, "test");
+  assert.equal(upstream.query.limit, "20");
 });

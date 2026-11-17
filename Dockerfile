@@ -14,18 +14,19 @@ COPY Cargo.toml Cargo.lock ./
 COPY backend ./backend
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release --locked
+    cargo build --release --locked --bins
 
 FROM debian:bookworm-slim AS runtime
 LABEL org.opencontainers.image.title="Tuwunel Admin" \
       org.opencontainers.image.description="Rust-powered Matrix Tuwunel administration console" \
-      org.opencontainers.image.version="1.3.0" \
+      org.opencontainers.image.version="1.4.0" \
       org.opencontainers.image.source="https://github.com/utoptop/tuwunel-admin" \
       org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 RUN groupadd --gid 1000 admin && useradd --uid 1000 --gid admin --no-create-home admin \
     && mkdir /app/data && chown admin:admin /app/data
 COPY --from=backend /app/target/release/tuwunel-admin /usr/local/bin/tuwunel-admin
+COPY --from=backend /app/target/release/tuwunel-observer /usr/local/bin/tuwunel-observer
 COPY --from=frontend /app/dist ./dist
 COPY config.example.toml ./config.toml
 USER 1000:1000
