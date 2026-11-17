@@ -1,0 +1,23 @@
+services:
+  tuwunel-admin:
+    image: utoptop/tuwunel-admin:1.0
+    container_name: tuwunel-admin
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
+    environment:
+      MATRIX_HOMESERVER_URL: ${MATRIX_HOMESERVER_URL:?Set MATRIX_HOMESERVER_URL in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      DATA_DIR: /app/data
+    volumes:
+      - admin-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  admin-data:
