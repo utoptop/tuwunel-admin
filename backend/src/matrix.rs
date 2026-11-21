@@ -141,21 +141,42 @@ impl Matrix {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value> {
+        self.request_with_timeout(token, method, path, body, None)
+            .await
+    }
+    pub async fn request_with_timeout(
+        &self,
+        token: &str,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        timeout_seconds: Option<u64>,
+    ) -> Result<Value> {
         let mut request = self
             .client
             .request(method, format!("{}{}", self.origin, path))
             .header("Accept", "application/json");
+        if let Some(secs) = timeout_seconds {
+            request = request.timeout(Duration::from_secs(secs));
+        }
         if !token.is_empty() {
             request = request.bearer_auth(token);
         }
         if let Some(body) = body {
             request = request.json(body);
         }
-        let mut response = request.send().await.map_err(|_| {
-            AppError::new(
-                502,
-                "无法连接 Matrix 服务器：请检查地址、TLS、网络，或自定义地址是否解析到被禁止的内网",
-            )
+        let mut response = request.send().await.map_err(|err| {
+            if err.is_timeout() {
+                AppError::new(
+                    504,
+                    "Matrix 服务器响应超时，请稍后重试或调大 limits.request_timeout_seconds",
+                )
+            } else {
+                AppError::new(
+                    502,
+                    "无法连接 Matrix 服务器：请检查地址、TLS、网络，或自定义地址是否解析到被禁止的内网",
+                )
+            }
         })?;
         let status = response.status();
         if status.is_redirection() {
@@ -254,7 +275,7 @@ pub fn safe_client(config: &Config, url: &Url, trusted: bool) -> Result<Client> 
         .timeout(Duration::from_secs(config.limits.request_timeout_seconds))
         .connect_timeout(Duration::from_secs(10))
         .pool_max_idle_per_host(8)
-        .user_agent("Tuwunel-Admin/1.3");
+        .user_agent("Tuwunel-Admin/1.5");
     if !trusted {
         builder = builder.dns_resolver(Arc::new(PublicDns));
     }

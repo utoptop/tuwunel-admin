@@ -85,24 +85,27 @@ export default function Dashboard({
             name: "本地用户",
             value: d?.users?.data?.total,
             icon: Users,
+            tone: "blue",
             page: "users",
-            label: "含已停用账号",
+            label: "含已停用与桥接账号",
             error: d?.users?.error,
           },
           {
             name: "已知房间",
             value: d?.rooms?.data?.total_rooms,
             icon: LayoutGrid,
+            tone: "indigo",
             page: "rooms",
-            label: "服务器已知会话",
+            label: "服务器已知会话空间",
             error: d?.rooms?.error,
           },
           {
             name: "媒体上传者",
             value: d?.media?.data?.total,
             icon: HardDrive,
+            tone: "teal",
             page: "media",
-            label: "有媒体占用的用户",
+            label: "有本地媒体占用的用户",
             error: d?.media?.error,
           },
           {
@@ -113,10 +116,11 @@ export default function Dashboard({
                 ? "未启用"
                 : undefined,
             icon: Clock3,
+            tone: d?.policy?.data?.enabled ? "green" : "amber",
             page: "media",
             label: d?.policy?.data?.enabled
-              ? `每 ${d.policy.data.intervalHours} 小时清理`
-              : "配置自动清理规则",
+              ? `每 ${d.policy.data.intervalHours} 小时自动清理`
+              : "配置自动保留规则",
             error: d?.policy?.error,
           },
         ].map((s) => (
@@ -125,9 +129,11 @@ export default function Dashboard({
             key={s.name}
             onClick={() => navigate(s.page)}
           >
-            <div>
+            <div className="stat-card-head">
               <span>{s.name}</span>
-              <s.icon size={19} />
+              <span className={`stat-icon ${s.tone}`}>
+                <s.icon size={17} />
+              </span>
             </div>
             <strong>
               {s.value === undefined
@@ -252,7 +258,7 @@ export default function Dashboard({
         </div>
         <div className="strip-right">
           <Badge tone="purple">Matrix Admin API</Badge>
-          <span>管理系统 v1.4.0</span>
+          <span>管理系统 v1.5.0</span>
         </div>
       </div>
     </>

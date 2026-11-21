@@ -54,7 +54,7 @@ def cleanup(version, legacy_builder=None, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='1.4')
+    parser.add_argument('--version', default='1.5')
     parser.add_argument('--cleanup-only', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--legacy-builder', help='Only prune cache explicitly mentioning tuwunel-admin in this shared builder')

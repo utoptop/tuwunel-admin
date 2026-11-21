@@ -327,10 +327,14 @@ async fn login(
     let (token, owned) = if let Some(token) = input.access_token.filter(|v| !v.is_empty()) {
         (token, false)
     } else {
-        if !authentication::discover(&state, Some(&origin))
-            .await?
-            .password
-        {
+        let d = authentication::discover(&state, Some(&origin)).await?;
+        if d.metadata.is_some() {
+            return Err(AppError::new(
+                400,
+                "服务器已启用 OIDC 认证，请通过 OIDC 认证入口登录",
+            ));
+        }
+        if !d.password {
             return Err(AppError::new(400, "服务器使用外部认证，请通过认证入口登录"));
         }
         let username = input

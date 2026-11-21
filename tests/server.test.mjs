@@ -494,3 +494,36 @@ test("rate limit includes attempts with invalid custom URLs", async (t) => {
     429,
   );
 });
+test("upstream timeout returns 504 with clear timeout error instead of generic network failure", async (t) => {
+  const slow = http.createServer((_req, res) => {
+    const timer = setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+    }, 3000);
+    res.on("close", () => clearTimeout(timer));
+  });
+  await new Promise((r) => slow.listen(0, "127.0.0.1", r));
+  t.after(
+    () =>
+      new Promise((r) => {
+        slow.close(r);
+        slow.closeAllConnections();
+      }),
+  );
+  const app = await startRust({
+    homeserver: `http://127.0.0.1:${slow.address().port}`,
+    requestTimeout: 1,
+  });
+  t.after(() => app.stop());
+  const res = await fetch(app.base + "/api/auth/discover", {
+    method: "POST",
+    headers: {
+      Origin: "http://admin.test",
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  const data = await res.json();
+  assert.equal(res.status, 504, JSON.stringify(data));
+  assert.match(data.error, /超时/);
+});

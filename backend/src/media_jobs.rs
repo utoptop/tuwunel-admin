@@ -11,11 +11,16 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
+fn default_true() -> bool {
+    true
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Start {
     users: Vec<String>,
     confirmation: String,
+    #[serde(default = "default_true", alias = "keepAvatar")]
+    keep_avatar: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -91,19 +96,20 @@ pub async fn start(
     let origin = s.matrix.origin.clone();
     let actor = s.user_id.clone();
     let targets = ids.clone();
+    let keep_avatar = input.keep_avatar;
     store::access(&state.store,true,move|store|{
   if store.data.media_jobs.values().any(|v|v["homeserver"]==origin && v["status"]=="running") || store.data.cleanup_jobs.values().any(|v|v["homeserver"]==origin && v["status"]=="running") {return Err(AppError::new(409,"当前服务器已有媒体或桥接清理运行，请等待完成"));}
   if store.data.media_jobs.len()>=20 {
    let old=store.data.media_jobs.iter().filter(|(_,j)|j["status"]!="running").min_by_key(|(_,j)|j["created"].as_u64().unwrap_or(0)).map(|(k,_)|k.clone());
    if let Some(old)=old {store.data.media_jobs.remove(&old);}else{return Err(AppError::new(429,"运行中的任务过多"));}
   }
-  store.audit(&origin,&actor,"开始全量用户媒体清理",&format!("{} 位用户",targets.len()),"success");
-  let rows=targets.iter().map(|id|json!({"userId":id,"status":"pending","deleted":0})).collect::<Vec<_>>();
-  store.data.media_jobs.insert(job_id.clone(),json!({"id":job_id,"homeserver":origin,"actor":actor,"created":now(),"status":"running","cancelRequested":false,"users":rows,"concurrency":3}));Ok(())
+  store.audit(&origin,&actor,"开始全量用户媒体清理",&format!("{} 位用户{}",targets.len(), if keep_avatar { "（保留头像）" } else { "（含头像）" }),"success");
+  let rows=targets.iter().map(|id|json!({"userId":id,"status":"pending","deleted":0,"preserved":0})).collect::<Vec<_>>();
+  store.data.media_jobs.insert(job_id.clone(),json!({"id":job_id,"homeserver":origin,"actor":actor,"created":now(),"status":"running","cancelRequested":false,"keepAvatar":keep_avatar,"users":rows,"concurrency":3}));Ok(())
  }).await?;
     let job = key.clone();
     tokio::spawn(async move {
-        run(state, headers, s, job, ids).await;
+        run(state, headers, s, job, ids, keep_avatar).await;
     });
     Ok(Json(json!({"id":key})))
 }
@@ -144,13 +150,179 @@ async fn active(state: &AppState, key: &str, headers: &HeaderMap) -> Result<Sess
     }
     Ok(auth(state, headers, true).await?.1)
 }
-async fn clean(state: &AppState, headers: &HeaderMap, key: &str, id: &str) -> Result<()> {
+fn parse_local_mxc(mxc: &str, expected_server: &str) -> Option<String> {
+    let rest = mxc.strip_prefix("mxc://")?;
+    let (server, media_id) = rest.split_once('/')?;
+    if server == expected_server
+        && !media_id.is_empty()
+        && !media_id.contains(['/', '?', '#', '\\', '%'])
+        && media_id != "."
+        && media_id != ".."
+    {
+        Some(media_id.to_owned())
+    } else {
+        None
+    }
+}
+async fn clean(
+    state: &AppState,
+    headers: &HeaderMap,
+    key: &str,
+    id: &str,
+    keep_avatar: bool,
+) -> Result<()> {
     let s = active(state, key, headers).await?;
     s.matrix.verify(&s.token).await?;
+    let server_name = id
+        .split_once(':')
+        .map(|(_, d)| d)
+        .ok_or_else(|| AppError::new(400, "无效的 Matrix 用户 ID"))?;
     let path = format!("/_synapse/admin/v1/users/{}/media", encode(id));
+    let mut protected_ids = HashSet::new();
+    if keep_avatar {
+        let profile = s
+            .matrix
+            .request(
+                &s.token,
+                Method::GET,
+                &format!("/_synapse/admin/v2/users/{}", encode(id)),
+                None,
+            )
+            .await
+            .map_err(|_| {
+                AppError::new(
+                    502,
+                    "无法读取用户资料以识别当前头像，已停止清理以避免误删头像",
+                )
+            })?;
+        if let Some(mxc) = profile["avatar_url"].as_str()
+            && let Some(mid) = parse_local_mxc(mxc, server_name)
+        {
+            protected_ids.insert(mid);
+        }
+    }
     let mut deleted = 0u64;
     let mut previous = String::new();
     update(state, key, id, json!({"status":"running"})).await?;
+    if !protected_ids.is_empty() {
+        let mut from = 0usize;
+        let mut preserved_ids = HashSet::new();
+        loop {
+            let s = active(state, key, headers).await?;
+            let current = s
+                .matrix
+                .request(
+                    &s.token,
+                    Method::GET,
+                    &format!("{path}?from={from}&limit=100"),
+                    None,
+                )
+                .await?;
+            let media = current["media"]
+                .as_array()
+                .ok_or_else(|| AppError::new(502, "媒体列表格式无效"))?;
+            let total = current["total"].as_u64().unwrap_or(0);
+            if media.is_empty() && total > 0 && from == 0 {
+                return Err(AppError::new(502, "媒体列表和剩余总数不一致"));
+            }
+            let mut deletable = Vec::new();
+            for item in media {
+                let mid = item["media_id"]
+                    .as_str()
+                    .ok_or_else(|| AppError::new(502, "媒体缺少 ID"))?;
+                if protected_ids.contains(mid) {
+                    preserved_ids.insert(mid.to_owned());
+                } else {
+                    deletable.push(mid.to_owned());
+                }
+            }
+            if deletable.is_empty() {
+                let next = current["next_token"]
+                    .as_str()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .or_else(|| current["next_token"].as_u64().map(|n| n as usize));
+                if let Some(next_from) = next
+                    && next_from > from
+                    && !media.is_empty()
+                {
+                    from = next_from;
+                    continue;
+                }
+                update(
+                    state,
+                    key,
+                    id,
+                    json!({
+                        "status": "complete",
+                        "deleted": deleted,
+                        "preserved": preserved_ids.len(),
+                        "remaining": 0,
+                        "verified": true
+                    }),
+                )
+                .await?;
+                return Ok(());
+            }
+            if deletable[0] == previous {
+                return Err(AppError::new(
+                    502,
+                    "媒体删除没有前进，请检查上游文件存储权限后重试",
+                ));
+            }
+            previous = deletable[0].clone();
+            from = 0;
+            let mut batch_deleted = 0usize;
+            let mut batch_gone = 0usize;
+            let mut first_error: Option<AppError> = None;
+            for chunk in deletable.chunks(6) {
+                let s = active(state, key, headers).await?;
+                let mut tasks = tokio::task::JoinSet::new();
+                for mid in chunk {
+                    let s = s.clone();
+                    let req_path = format!(
+                        "/_synapse/admin/v1/media/{}/{}",
+                        encode(server_name),
+                        encode(mid)
+                    );
+                    tasks.spawn(async move {
+                        s.matrix
+                            .request(&s.token, Method::DELETE, &req_path, Some(&json!({})))
+                            .await
+                    });
+                }
+                while let Some(res) = tasks.join_next().await {
+                    match res.map_err(AppError::internal)? {
+                        Ok(_) => batch_deleted += 1,
+                        Err(e) if e.status.as_u16() == 404 => batch_gone += 1,
+                        Err(e) => {
+                            if first_error.is_none() {
+                                first_error = Some(e);
+                            }
+                        }
+                    }
+                }
+            }
+            if batch_deleted + batch_gone == 0 {
+                return Err(first_error
+                    .unwrap_or_else(|| AppError::new(502, "仍有媒体但上游未删除任何文件")));
+            }
+            deleted += batch_deleted as u64;
+            let remaining = total
+                .saturating_sub(preserved_ids.len() as u64)
+                .saturating_sub((batch_deleted + batch_gone) as u64);
+            update(
+                state,
+                key,
+                id,
+                json!({
+                    "deleted": deleted,
+                    "preserved": preserved_ids.len(),
+                    "remaining": remaining
+                }),
+            )
+            .await?;
+        }
+    }
     loop {
         let s = active(state, key, headers).await?;
         let current = s
@@ -173,7 +345,7 @@ async fn clean(state: &AppState, headers: &HeaderMap, key: &str, id: &str) -> Re
                 state,
                 key,
                 id,
-                json!({"status":"complete","deleted":deleted,"remaining":0,"verified":true}),
+                json!({"status":"complete","deleted":deleted,"preserved":0,"remaining":0,"verified":true}),
             )
             .await?;
             return Ok(());
@@ -205,10 +377,17 @@ async fn clean(state: &AppState, headers: &HeaderMap, key: &str, id: &str) -> Re
             return Err(AppError::new(502, "仍有媒体但上游未删除任何文件"));
         }
         deleted += count as u64;
-        update(state,key,id,json!({"deleted":deleted,"remaining":current["total"].as_u64().map(|v|v.saturating_sub(count as u64))})).await?;
+        update(state,key,id,json!({"deleted":deleted,"preserved":0,"remaining":current["total"].as_u64().map(|v|v.saturating_sub(count as u64))})).await?;
     }
 }
-async fn run(state: AppState, headers: HeaderMap, s: Session, key: String, ids: Vec<String>) {
+async fn run(
+    state: AppState,
+    headers: HeaderMap,
+    s: Session,
+    key: String,
+    ids: Vec<String>,
+    keep_avatar: bool,
+) {
     let mut queue = ids.into_iter();
     let mut running = tokio::task::JoinSet::new();
     loop {
@@ -219,7 +398,7 @@ async fn run(state: AppState, headers: HeaderMap, s: Session, key: String, ids: 
             let key = key.clone();
             let s = s.clone();
             running.spawn(async move {
-                let result = clean(&state, &headers, &key, &id).await;
+                let result = clean(&state, &headers, &key, &id, keep_avatar).await;
                 if let Err(e) = &result {
                     let _ = update(
                         &state,

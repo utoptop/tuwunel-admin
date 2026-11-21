@@ -264,6 +264,29 @@ test("discovery selects password, SSO or OAuth from server capabilities and enfo
     400,
   );
 });
+test("native OIDC suppresses password login in discovery and rejects password login requests", async (t) => {
+  const { app, up } = await fixture(t, { oauth: true, password: true });
+  up.setMetadata({
+    authorization_endpoint: up.origin + "/_tuwunel/oidc/authorize",
+    token_endpoint: up.origin + "/_tuwunel/oidc/token",
+    registration_endpoint: up.origin + "/_tuwunel/oidc/registration",
+  });
+  const r = await post(app, "/auth/discover", {});
+  assert.equal(r.res.status, 200);
+  assert.equal(r.data.oauth, true);
+  assert.equal(r.data.nativeOidc, true);
+  assert.equal(r.data.password, false);
+  assert.equal(r.data.preferred, "oauth");
+  const pw = await post(app, "/login", {
+    username: "admin",
+    password: "secret",
+  });
+  assert.equal(pw.res.status, 400);
+  assert.match(pw.data.error, /OIDC/);
+  assert.ok(
+    !up.calls.some((c) => c.path.endsWith("/login") && c.method === "POST"),
+  );
+});
 test("SSO binds callback to originating browser and one-time state, verifies admin, hides tokens", async (t) => {
   const { app, up } = await fixture(t, { sso: true });
   const b = await begin(app, "sso");

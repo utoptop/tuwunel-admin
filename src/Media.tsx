@@ -107,7 +107,7 @@ export function MediaPage({ operate }: { operate: Operate }) {
         <p>
           集中管理存储，按需保留。
           <br />
-          <span>勾选多位用户，一次清理全部文件。</span>
+          <span>勾选多位用户批量清理，默认自动保留当前头像。</span>
         </p>
       </div>
       <MediaJobs

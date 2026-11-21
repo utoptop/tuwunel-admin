@@ -114,10 +114,16 @@ fn bridge(config: &BridgeConfig, s: &Session, user: &Value) -> Option<Value> {
     }
     None
 }
+fn is_true(v: &Value) -> bool {
+    v == true || v == 1
+}
+fn is_erased(u: &Value) -> bool {
+    is_true(&u["erased"])
+}
 fn protected(s: &Session, u: &Value) -> bool {
     let id = u["name"].as_str().unwrap_or_default();
     let local = id.split(':').next().unwrap_or_default();
-    (u["admin"] == true || u["admin"] == 1)
+    is_true(&u["admin"])
         || id == s.user_id
         || matches!(local, "@conduit" | "@tuwunel" | "@server")
         || !id
@@ -230,8 +236,10 @@ fn matches(u: &Value, f: &Filter) -> bool {
             name => u["bridge"]["name"] == name,
         }
         && match f.status.as_str() {
-            "active" => u["deactivated"] != true,
-            "admin" => u["admin"] == true || u["admin"] == 1,
+            "active" => !is_true(&u["deactivated"]),
+            "unerased" => !is_erased(u),
+            "erased" => is_erased(u),
+            "admin" => is_true(&u["admin"]),
             _ => true,
         }
 }
@@ -243,17 +251,46 @@ pub async fn directory(
     let (_, s) = auth(&state, &headers, true).await?;
     let all = rows(&state, &s, f.refresh).await?;
     let mut groups = BTreeMap::<String, usize>::new();
+    let mut pending_groups = BTreeMap::<String, usize>::new();
+    let mut regular_total = 0usize;
+    let mut regular_erased = 0usize;
+    let mut bridges_erased = 0usize;
     for row in &all {
+        let erased = is_erased(row);
         if let Some(name) = row["bridge"]["name"].as_str() {
             *groups.entry(name.into()).or_default() += 1;
+            if erased {
+                bridges_erased += 1;
+            } else {
+                *pending_groups.entry(name.into()).or_default() += 1;
+            }
+        } else {
+            regular_total += 1;
+            if erased {
+                regular_erased += 1;
+            }
         }
     }
     let bridge_count = groups.values().sum::<usize>();
+    let bridges_pending = bridge_count - bridges_erased;
     let filtered: Vec<_> = all.iter().filter(|u| matches(u, &f)).collect();
     let total = filtered.len();
-    Ok(Json(
-        json!({"users":filtered.into_iter().skip(f.from).take(20).collect::<Vec<_>>(),"total":total,"next_token":(f.from.saturating_add(20)<total).then(||f.from+20),"counts":{"regular":all.len()-bridge_count,"bridges":bridge_count,"all":all.len()},"groups":groups}),
-    ))
+    Ok(Json(json!({
+        "users": filtered.into_iter().skip(f.from).take(20).collect::<Vec<_>>(),
+        "total": total,
+        "next_token": (f.from.saturating_add(20) < total).then(|| f.from + 20),
+        "counts": {
+            "regular": regular_total,
+            "regularActive": regular_total - regular_erased,
+            "bridges": bridge_count,
+            "bridgesPending": bridges_pending,
+            "bridgesErased": bridges_erased,
+            "erased": regular_erased + bridges_erased,
+            "all": all.len()
+        },
+        "groups": groups,
+        "pendingGroups": pending_groups
+    })))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -280,7 +317,10 @@ pub async fn preview(
         .iter()
         .filter(|u| {
             if input.all {
-                matches(u, &input.filter) && !u["bridge"].is_null() && !protected(&s, u)
+                matches(u, &input.filter)
+                    && !u["bridge"].is_null()
+                    && !protected(&s, u)
+                    && (input.filter.status == "erased" || !is_erased(u))
             } else {
                 u["name"]
                     .as_str()
@@ -417,19 +457,24 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
     if protected(&s, &u) || u["name"] != id || bridge(&state.config.bridges, &s, &u).is_none() {
         return Err(AppError::new(403, "账号权限或桥接归属已变化，已跳过"));
     }
-    request(
-        &s,
-        Method::POST,
-        format!("/_synapse/admin/v1/deactivate/{}", encode(id)),
-        Some(json!({"erase":true})),
-    )
-    .await?;
+    // Deactivation may leave many federated rooms; allow a wider timeout than quick reads.
+    let deactivate_timeout = Some(state.config.limits.request_timeout_seconds.clamp(120, 300));
+    s.matrix
+        .request_with_timeout(
+            &s.token,
+            Method::POST,
+            &format!("/_synapse/admin/v1/deactivate/{}", encode(id)),
+            Some(&json!({"erase":true})),
+            deactivate_timeout,
+        )
+        .await?;
     result["deactivated"] = json!(true);
     let path = format!("/_synapse/admin/v1/users/{}/media", encode(id));
+    let server_name = id.split_once(':').map(|(_, d)| d).unwrap_or_default();
     let mut previous = String::new();
     loop {
         let (_, s) = auth(state, headers, true).await?;
-        let remaining = request(&s, Method::GET, format!("{path}?from=0&limit=1"), None).await?;
+        let remaining = request(&s, Method::GET, format!("{path}?from=0&limit=100"), None).await?;
         let media = remaining["media"]
             .as_array()
             .ok_or_else(|| AppError::new(502, "媒体列表响应无效"))?;
@@ -454,10 +499,31 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
             Some(json!({})),
         )
         .await?;
-        let count = deleted["deleted_media"]
+        let mut count = deleted["deleted_media"]
             .as_array()
             .map(|a| a.len())
             .unwrap_or(0);
+        if count == 0 && !server_name.is_empty() {
+            // Fallback to individual media deletion if batch deletion skipped items.
+            for item in media {
+                if let Some(mid) = item["media_id"].as_str()
+                    && request(
+                        &s,
+                        Method::DELETE,
+                        format!(
+                            "/_synapse/admin/v1/media/{}/{}",
+                            encode(server_name),
+                            encode(mid)
+                        ),
+                        Some(json!({})),
+                    )
+                    .await
+                    .is_ok()
+                {
+                    count += 1;
+                }
+            }
+        }
         if count == 0 {
             return Err(AppError::new(
                 502,
@@ -467,44 +533,109 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
         result["mediaDeleted"] = json!(result["mediaDeleted"].as_u64().unwrap_or(0) + count as u64);
     }
     let (_, s) = auth(state, headers, true).await?;
-    let profile = request(
+    let mut profile = request(
         &s,
         Method::GET,
         format!("/_synapse/admin/v2/users/{}", encode(id)),
         None,
     )
     .await?;
-    if profile["deactivated"] != true
-        || profile["erased"] != true
-        || profile["avatar_url"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty())
+    if profile["avatar_url"]
+        .as_str()
+        .is_some_and(|v| !v.is_empty())
         || profile["displayname"]
             .as_str()
-            .is_some_and(|s| !s.is_empty())
+            .is_some_and(|v| !v.is_empty())
+    {
+        let _ = request(
+            &s,
+            Method::PUT,
+            format!("/_synapse/admin/v2/users/{}", encode(id)),
+            Some(json!({"displayname": "", "avatar_url": ""})),
+        )
+        .await;
+        profile = request(
+            &s,
+            Method::GET,
+            format!("/_synapse/admin/v2/users/{}", encode(id)),
+            None,
+        )
+        .await?;
+    }
+    if !is_true(&profile["deactivated"])
+        || !is_true(&profile["erased"])
+        || profile["avatar_url"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty())
+        || profile["displayname"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty())
     {
         return Err(AppError::new(
             502,
             "服务器尚未完成停用和资料擦除，请检查账号状态后重试",
         ));
     }
-    for (version, suffix, key) in [
-        ("v2", "devices", "devices"),
-        ("v1", "joined_rooms", "joined_rooms"),
-    ] {
-        let value = request(
+    let devices_resp = request(
+        &s,
+        Method::GET,
+        format!("/_synapse/admin/v2/users/{}/devices", encode(id)),
+        None,
+    )
+    .await?;
+    let device_ids: Vec<String> = devices_resp["devices"]
+        .as_array()
+        .ok_or_else(|| AppError::new(502, "设备列表响应无效"))?
+        .iter()
+        .filter_map(|d| d["device_id"].as_str().map(str::to_owned))
+        .collect();
+    if !device_ids.is_empty() {
+        let _ = request(
+            &s,
+            Method::POST,
+            format!("/_synapse/admin/v2/users/{}/delete_devices", encode(id)),
+            Some(json!({"devices": device_ids})),
+        )
+        .await;
+        let check = request(
             &s,
             Method::GET,
-            format!("/_synapse/admin/{version}/users/{}/{suffix}", encode(id)),
+            format!("/_synapse/admin/v2/users/{}/devices", encode(id)),
             None,
         )
         .await?;
-        if !value[key].as_array().is_some_and(|a| a.is_empty()) {
+        if !check["devices"].as_array().is_some_and(|a| a.is_empty()) {
             return Err(AppError::new(
                 502,
-                format!("清理后仍存在 {suffix} 数据，请检查服务器后重试"),
+                "清理后仍存在未注销的设备，请检查服务器后重试",
             ));
         }
+    }
+    let rooms_resp = request(
+        &s,
+        Method::GET,
+        format!("/_synapse/admin/v1/users/{}/joined_rooms", encode(id)),
+        None,
+    )
+    .await?;
+    let joined = rooms_resp["joined_rooms"]
+        .as_array()
+        .ok_or_else(|| AppError::new(502, "已加入房间响应无效"))?;
+    if !joined.is_empty() {
+        let sample = joined
+            .iter()
+            .filter_map(Value::as_str)
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(AppError::new(
+            502,
+            format!(
+                "停用后仍停留在 {} 个房间（{}），可能是远端联邦房间退房失败，请检查服务器后重试",
+                joined.len(),
+                sample
+            ),
+        ));
     }
     let data = request(
         &s,
@@ -514,12 +645,25 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
     )
     .await?;
     let data = data.get("account_data").unwrap_or(&data);
-    if !data["global"].as_object().is_some_and(|v| v.is_empty())
-        || !data["rooms"].as_object().is_some_and(|v| v.is_empty())
-    {
+    let global_empty = data
+        .get("global")
+        .is_none_or(|v| v.is_null() || v.as_object().is_some_and(|m| m.is_empty()));
+    if !global_empty {
         return Err(AppError::new(
             502,
-            "账户数据未能确认清空，请检查服务器后重试",
+            "全局账户数据未能确认清空，请检查服务器后重试",
+        ));
+    }
+    let remaining_room_data = data
+        .get("rooms")
+        .and_then(Value::as_object)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if remaining_room_data > 0 {
+        // User has already left all joined rooms; Tuwunel does not sweep room account data
+        // for historical banned rooms and exposes no API to delete it.
+        result["note"] = json!(format!(
+            "已退出全部房间；保留了 {remaining_room_data} 条已退出/封禁历史房间的账户数据（上游未提供清除接口）"
         ));
     }
     result["accountVerified"] = json!(true);

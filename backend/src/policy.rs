@@ -107,22 +107,25 @@ pub async fn run(state: AppState, origin: String, force: bool) -> Result<Value> 
             .ok_or_else(|| AppError::new(400, "请重新保存策略凭据"))?;
         let token = store::access(&state.store, false, move |s| s.unseal(&credential)).await?;
         matrix.verify(&token).await?;
+        // Long-running storage sweeps can take longer than interactive API calls.
+        let sweep_timeout = Some(state.config.limits.request_timeout_seconds.clamp(120, 300));
         let cutoff = started.saturating_sub(policy.settings.local_days * 86400000);
         let path = format!(
             "/_synapse/admin/v1/media/delete?before_ts={cutoff}&size_gt={}&keep_profiles={}",
             policy.settings.size_gt, policy.settings.keep_profiles
         );
         let local = matrix
-            .request(&token, Method::POST, &path, Some(&json!({})))
+            .request_with_timeout(&token, Method::POST, &path, Some(&json!({})), sweep_timeout)
             .await?;
         counts["deleteOldMedia"] = local.get("total").cloned().unwrap_or(json!(0));
         let cutoff = started.saturating_sub(policy.settings.remote_days * 86400000);
         let remote = matrix
-            .request(
+            .request_with_timeout(
                 &token,
                 Method::POST,
                 &format!("/_synapse/admin/v1/purge_media_cache?before_ts={cutoff}"),
                 Some(&json!({})),
+                sweep_timeout,
             )
             .await?;
         counts["purgeRemote"] = remote.get("deleted").cloned().unwrap_or(json!(0));

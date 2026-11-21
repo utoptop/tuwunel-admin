@@ -2,15 +2,14 @@
 
 中文 Tuwunel / Matrix 管理中心。**Rust + Tokio + Axum 后端，React / TypeScript 前端**。生产镜像不再需要 Node.js，所有运行设置通过 `config.toml` 管理，不读取 `.env`。
 
-当前版本 **1.4.0**；双架构镜像 `utoptop/tuwunel-admin:1.4`，同时更新原约定的 `:1.0` 标签。支持 `linux/amd64` / `linux/arm64`。MIT License。
+当前版本 **1.5.0**；双架构镜像 `utoptop/tuwunel-admin:1.5`，同时更新原约定的 `:1.0` 标签。支持 `linux/amd64` / `linux/arm64`。MIT License。
 
-## 本次改进
+## 本次改进（1.5.0）
 
-- 用户媒体支持全量批量清理，逐人显示进度，可停止与重试。
-- 用户、房间和媒体用量支持自动下拉加载，房间列表显示名称与头像。
-- Rust 只读采集器展示 Tuwunel 进程指标、文件配置与注册 IP 审计。
-- 全新管理台布局，支持浅色、深色及跟随系统，保留管理员头像与服务器版本。
-- 延续部署配置锁定服务器、自动密码 / SSO / OAuth 登录、桥接用户分组与清理、媒体生命周期和 73 个管理 API 操作。
+- **桥接用户清理与归档优化**：区分「待清理」与「已擦除归档」桥接账号（清理后自动归档并标示 `已擦除`，不再与未清理账号混淆）；加固停用后的资料清空、设备注销、逐项媒体删除回退与历史封禁房间账户数据兼容。
+- **用户媒体清理默认保护头像**：清理单个或批量用户媒体时默认开启「保留用户当前头像」，自动读取 `avatar_url` 并逐项精准跳过头像 MXC；用户媒体列表高亮标记「当前头像」防止误删。
+- **原生 OIDC 纯净登录**：服务器启用原生 OIDC / OAuth 认证时，登录页自动隐藏账号密码登录与管理员令牌入口，仅展示 OIDC 认证入口，后端同步拦截密码登录请求。
+- **全新 Apple / macOS 现代通透 UI**：全面重构界面设计与双主题系统，采用温润中性底色、细腻毛玻璃侧栏与顶栏、macOS 分段控件与原生开关、渐变折线监测图及更清晰的文字层级。
 
 ![浅色房间管理](docs/rooms-v14-light.jpg)
 ![深色用户管理](docs/users-v14-dark.jpg)
@@ -259,13 +258,13 @@ user_prefix = "@telegrambot"
 ```bash
 # 完成检查后发布 AMD64 / ARM64；需预先 docker login
 npm run check
-python3 scripts/release.py --version 1.4
+python3 scripts/release.py --version 1.5
 
 # 仅预览将清理的旧镜像
-python3 scripts/release.py --version 1.4 --cleanup-only --dry-run
+python3 scripts/release.py --version 1.5 --cleanup-only --dry-run
 ```
 
-发布脚本使用本次构建专属的临时 BuildKit 构建器。推送并核验镜像后拉取 `:1.0` 与 `:1.4`，删除带有本项目来源标签的旧本地镜像；保留当前版本、任何容器引用的镜像以及带有其他项目标签的镜像。无论构建成功或失败，退出时均移除本次专用构建器及其缓存卷。不会执行全局 `docker system prune`，不会删除数据卷或远端历史镜像。
+发布脚本使用本次构建专属的临时 BuildKit 构建器。推送并核验镜像后拉取 `:1.0` 与 `:1.5`，删除带有本项目来源标签的旧本地镜像；保留当前版本、任何容器引用的镜像以及带有其他项目标签的镜像。无论构建成功或失败，退出时均移除本次专用构建器及其缓存卷。不会执行全局 `docker system prune`，不会删除数据卷或远端历史镜像。
 
 以前在共享构建器留下的缓存，可追加 `--legacy-builder desktop-linux`；只清理描述明确包含 `tuwunel-admin` 且未被使用的记录，不推测其他缓存的归属。GitHub 发布工作流使用同一脚本。
 
@@ -309,7 +308,7 @@ cargo fmt --all -- --check
 
 真实联调使用独立临时 Tuwunel，操作流程见 [docs/TESTING.md](docs/TESTING.md)。生产运行目录只需 Rust 二进制、`dist/`、配置文件和可写数据目录。
 
-CI 验证 Rust、前端与 Docker 构建。发布工作流需要 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` Actions Secrets；发布 `:1.0` 和 `:1.4` 双架构镜像。GitHub 密钥不能替代 Docker Hub 凭据。
+CI 验证 Rust、前端与 Docker 构建。发布工作流需要 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` Actions Secrets；发布 `:1.0` 和 `:1.5` 双架构镜像。GitHub 密钥不能替代 Docker Hub 凭据。
 
 ## 排错
 

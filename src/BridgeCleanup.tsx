@@ -50,12 +50,14 @@ export function BridgeCleanup({
         ) : (
           plan.data && (
             <>
-              <div className="cleanup-summary">
-                <AlertTriangle size={24} />
+              <div className="destructive-banner">
+                <span className="banner-icon">
+                  <AlertTriangle size={20} />
+                </span>
                 <div>
                   <strong>将清理 {plan.data.count} 个桥接用户</strong>
                   <p>
-                    这是不可撤销的操作。请核对以下目标，并确认对应桥接已停止。
+                    这是不可撤销的操作。请核对以下目标，并确认对应桥接服务已停止。
                   </p>
                 </div>
               </div>
@@ -85,8 +87,8 @@ export function BridgeCleanup({
                 total={plan.data.count}
                 onChange={setFrom}
               />
-              <label className="cleanup-confirm">
-                输入「{plan.data.confirmation}」确认
+              <label className="field">
+                <span>输入「{plan.data.confirmation}」确认清理</span>
                 <input
                   aria-label="桥接清理确认文字"
                   autoComplete="off"
@@ -96,8 +98,7 @@ export function BridgeCleanup({
                 />
               </label>
               <p className="footnote">
-                预览有效期 10
-                分钟。清理在后台运行；退出登录或会话失效会中断后续操作，已完成的步骤不会回滚。
+                预览有效期 10 分钟。清理完成后，已擦除的账号会自动归入「已擦除归档」视图（Matrix 协议会保留 ID 占位以防重用）。
               </p>
             </>
           )
@@ -108,7 +109,7 @@ export function BridgeCleanup({
           取消
         </Button>
         <Button
-          kind="danger-soft"
+          kind="danger"
           disabled={
             busy || !plan.data || confirmation !== plan.data.confirmation
           }
@@ -140,17 +141,34 @@ export function BridgeCleanup({
     </Modal>
   );
 }
-export function BridgeJobs({ onRetry }: { onRetry: (ids: string[]) => void }) {
+
+export function BridgeJobs({
+  onRetry,
+  onComplete,
+}: {
+  onRetry: (ids: string[]) => void;
+  onComplete?: () => void;
+}) {
   const [jobs, setJobs] = useState<Data[]>([]),
     [error, setError] = useState("");
   useEffect(() => {
     let active = true,
-      timer: ReturnType<typeof setTimeout>;
+      timer: ReturnType<typeof setTimeout>,
+      previous = new Map<string, string>();
     const load = async () => {
       clearTimeout(timer);
       try {
         const result = await request("/bridges/jobs");
         if (active) {
+          if (
+            result.jobs.some(
+              (j: Data) =>
+                previous.get(j.id) === "running" && j.status !== "running",
+            )
+          ) {
+            onComplete?.();
+          }
+          previous = new Map(result.jobs.map((j: Data) => [j.id, j.status]));
           setJobs(result.jobs);
           setError("");
         }
@@ -172,10 +190,10 @@ export function BridgeJobs({ onRetry }: { onRetry: (ids: string[]) => void }) {
   return (
     <Panel
       title="桥接清理记录"
-      subtitle="保留逐个账号的执行结果；失败或中断后可重新预览剩余目标。"
+      subtitle="保留逐个账号的执行与核验结果；失败或中断后可重新预览剩余目标"
     >
       <ErrorBox error={error} />
-      <div className="cleanup-jobs">
+      <div className="job-list">
         {jobs.map((job) => {
           const completed = job.results.filter(
             (r: Data) => r.status === "complete",
@@ -187,27 +205,27 @@ export function BridgeJobs({ onRetry }: { onRetry: (ids: string[]) => void }) {
           return (
             <details
               key={job.id}
-              className="cleanup-job"
+              className="job-card"
               open={running || undefined}
             >
               <summary>
-                <span className="cleanup-job-icon">
+                <span className={`job-state-icon ${job.status}`}>
                   {running ? (
-                    <LoaderCircle className="spin" size={18} />
+                    <LoaderCircle className="spin" size={17} />
                   ) : job.status === "complete" ? (
-                    <CheckCircle2 size={18} />
+                    <CheckCircle2 size={17} />
                   ) : (
-                    <AlertTriangle size={18} />
+                    <AlertTriangle size={17} />
                   )}
                 </span>
-                <span>
+                <div>
                   <strong>
-                    {job.processed} / {job.total} 个账号已处理
+                    {job.processed} / {job.total} 个桥接账号已处理
                   </strong>
                   <small>
-                    {fmtDate(job.created)} · 已核实 {completed.length} 个
+                    {fmtDate(job.created)} · 已核实擦除 {completed.length} 个
                   </small>
-                </span>
+                </div>
                 <Badge
                   tone={
                     running
@@ -226,27 +244,30 @@ export function BridgeJobs({ onRetry }: { onRetry: (ids: string[]) => void }) {
                 </Badge>
               </summary>
               {job.message && <p className="notice">{job.message}</p>}
-              <div className="cleanup-results">
+              <div className="job-results">
                 {job.results.map((r: Data) => (
-                  <div key={r.user_id} className="cleanup-result">
+                  <div key={r.user_id} className="job-row">
                     <code>{r.user_id}</code>
-                    <span>
+                    <span className="job-row-meta">
                       {r.status === "complete"
-                        ? "账户清理已核实"
+                        ? "已擦除并核实"
                         : r.deactivated
                           ? "已停用，后续清理未完成"
                           : "未完成"}{" "}
                       · 删除 {r.mediaDeleted} 个媒体
                     </span>
+                    {r.note && <small className="job-note">{r.note}</small>}
                     {r.error && <ErrorBox error={r.error} />}
                   </div>
                 ))}
               </div>
               {!job.results.length && <Empty text="正在处理第一个账号…" />}
               {!running && retry.length > 0 && (
-                <Button onClick={() => onRetry(retry)}>
-                  重新预览未完成用户（{retry.length}）
-                </Button>
+                <div className="job-actions">
+                  <Button onClick={() => onRetry(retry)}>
+                    重新预览未完成用户（{retry.length}）
+                  </Button>
+                </div>
               )}
             </details>
           );

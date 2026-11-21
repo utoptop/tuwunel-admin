@@ -25,6 +25,7 @@ clients = ${options.authClient ? `[{ issuer = ${JSON.stringify(options.authClien
 data_dir = ${JSON.stringify(directory)}
 [limits]
 login_attempts = ${options.loginAttempts || 10}
+request_timeout_seconds = ${options.requestTimeout || 30}
 [scheduler]
 enabled = ${options.scheduler || false}
 poll_seconds = 1

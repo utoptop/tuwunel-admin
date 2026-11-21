@@ -1,6 +1,6 @@
 # 服务器监测与注册 IP 审计
 
-v1.4 的「服务器监测」显示 Tuwunel 进程 RSS、CPU 使用率、磁盘读写速率、网络收发速率、线程数与已建立 TCP 连接，以及部署配置和注册审计。采集器 `tuwunel-observer` 用 Rust 编写，和面板一起包含在 `utoptop/tuwunel-admin:1.0`、`:1.4` 镜像内。面板无需 Docker socket，也不会执行任意系统命令。
+「服务器监测」显示 Tuwunel 进程 RSS、CPU 使用率、磁盘读写速率、网络收发速率、线程数与已建立 TCP 连接，以及部署配置和注册审计。采集器 `tuwunel-observer` 用 Rust 编写，和面板一起包含在 `utoptop/tuwunel-admin:1.0`、`:1.5` 镜像内。面板无需 Docker socket，也不会执行任意系统命令。
 
 这些数据不在 Tuwunel 现有 HTTP 管理 API 中。只连接远程 Matrix API 时显示「未接入」，不会用面板容器的 CPU、内存冒充 Tuwunel。HTTP 活跃请求并发和内存总线带宽目前不可获取；TCP 连接、线程和网络带宽有明确独立标签。
 

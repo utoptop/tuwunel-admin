@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
-  Check,
+  CheckCircle2,
   ExternalLink,
   Globe2,
+  HardDrive,
   KeyRound,
+  LayoutGrid,
   LoaderCircle,
+  Lock,
   RefreshCw,
   Server,
   ShieldCheck,
   Users,
-  LayoutGrid,
-  HardDrive,
 } from "lucide-react";
 import { request, type Data, type Session } from "./api";
 import { Button, ErrorBox, useLoad } from "./ui";
@@ -30,11 +31,12 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
     [passwordMode, setPasswordMode] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+
   useEffect(() => {
     if (config.data) setHomeserver(config.data.homeserver || "");
   }, [config.data]);
+
   useEffect(() => {
-    // Remove the obsolete browser-side lock preference. Deployment is the only authority.
     try {
       localStorage.removeItem("tuwunel-admin.pinned-server");
     } catch {}
@@ -50,6 +52,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       history.replaceState(null, "", location.pathname + location.hash);
     }
   }, []);
+
   useEffect(() => {
     let active = true;
     setDiscovery(null);
@@ -73,7 +76,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
           .then((data) => {
             if (active) {
               setDiscovery(data);
-              setPasswordMode(!data.oauth && !data.sso);
+              setPasswordMode(!data.oauth && !data.sso && Boolean(data.password));
             }
           })
           .catch((e) => {
@@ -82,14 +85,18 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
           .finally(() => {
             if (active) setChecking(false);
           }),
-      config.data.locked ? 0 : 600,
+      config.data.locked ? 0 : 500,
     );
     return () => {
       active = false;
       clearTimeout(timer);
     };
   }, [homeserver, config.data, retry]);
-  const auth = Boolean(discovery?.oauth || discovery?.sso);
+
+  const isOidc = Boolean(discovery?.oauth);
+  const isSso = Boolean(!isOidc && discovery?.sso);
+  const allowPassword = Boolean(!isOidc && discovery?.password);
+
   const redirect = async () => {
     if (!discovery) return;
     setBusy(true);
@@ -97,7 +104,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
     try {
       const result = await request("/auth/start", "POST", {
         homeserver: discovery.homeserver,
-        kind: discovery.oauth ? "oauth" : "sso",
+        kind: isOidc ? "oauth" : "sso",
       });
       location.assign(result.url);
     } catch (e) {
@@ -105,6 +112,7 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       setBusy(false);
     }
   };
+
   const login = async (mode: "password" | "token") => {
     if (!discovery) return;
     setBusy(true);
@@ -125,88 +133,112 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       setBusy(false);
     }
   };
+
+  const authLabel = discovery
+    ? isOidc
+      ? discovery.nativeOidc
+        ? "原生 OIDC 认证"
+        : "OIDC / OAuth 认证"
+      : isSso
+        ? "单点登录 SSO"
+        : allowPassword
+          ? "账号密码登录"
+          : "令牌登录"
+    : "";
+
   return (
     <div className="access-page">
+      <div className="access-ambient" aria-hidden="true" />
       <header className="access-header">
         <Brand />
-        <ThemeToggle />
-        <a
-          href="https://matrix-construct.github.io/tuwunel/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          使用文档 <ExternalLink size={14} />
-        </a>
+        <div className="access-header-actions">
+          <ThemeToggle />
+          <a
+            className="doc-pill"
+            href="https://matrix-construct.github.io/tuwunel/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            官方文档
+            <ExternalLink size={13} />
+          </a>
+        </div>
       </header>
+
       <main className="access-layout">
         <section className="access-intro">
           <span className="access-kicker">
-            <span className="dot" /> YOUR MATRIX. YOUR CONTROL.
+            <span className="dot" />
+            Tuwunel Matrix Control Center
           </span>
           <h1>
-            管理每一次
+            澄澈有序，
             <br />
-            <em>连接。</em>
+            <em>掌控每一处连接。</em>
           </h1>
           <p>
-            用户、房间与媒体，在一个工作区井然有序。
-            <br />
-            连接你的服务器，开始管理。
+            面向 Tuwunel 的现代管理工作台。成员、房间、媒体生命周期与服务器观测，
+            以清晰克制的秩序呈现。
           </p>
-          <div className="access-diagram" aria-hidden="true">
-            <div className="diagram-server">
-              <Server size={26} />
+
+          <div className="access-showcase" aria-hidden="true">
+            <div className="showcase-main">
+              <span className="showcase-icon">
+                <Server size={20} />
+              </span>
               <div>
-                <strong>Matrix homeserver</strong>
-                <small>你的服务器 · 你的管理空间</small>
+                <strong>Matrix Homeserver</strong>
+                <small>实时探测认证能力 · 服务端安全托管会话</small>
               </div>
-              <span className="diagram-status" />
+              <span className="showcase-live" />
             </div>
-            <div className="diagram-branches">
-              <span>
-                <Users size={20} />
-                用户
-              </span>
-              <span>
-                <LayoutGrid size={20} />
-                房间
-              </span>
-              <span>
-                <HardDrive size={20} />
-                媒体
-              </span>
+            <div className="showcase-tiles">
+              <div>
+                <Users size={17} />
+                <span>成员与桥接</span>
+              </div>
+              <div>
+                <LayoutGrid size={17} />
+                <span>房间治理</span>
+              </div>
+              <div>
+                <HardDrive size={17} />
+                <span>媒体与存储</span>
+              </div>
             </div>
           </div>
-          <div className="access-note">
-            <ShieldCheck size={18} />
+
+          <div className="access-trust">
+            <ShieldCheck size={17} />
             <span>
-              使用服务器原有的身份认证
-              <br />
-              <small>每次登录均验证管理员权限</small>
+              使用服务器原生身份认证，登录凭据仅保存在受保护的服务端内存中。
             </span>
           </div>
         </section>
+
         <section className="access-card" aria-labelledby="login-heading">
           <div className="access-card-heading">
-            <span className="section-index">01 / CONNECT</span>
             <h2 id="login-heading">登录管理中心</h2>
-            <p>登录方式由你的 Matrix 服务器决定。</p>
+            <p>自动识别目标服务器的认证方式，并校验管理员身份。</p>
           </div>
+
           <div className="connection-block">
             {config.data?.locked ? (
               <div className="fixed-server">
-                <Server size={20} />
+                <span className="fixed-server-icon">
+                  <Lock size={16} />
+                </span>
                 <div>
-                  <small>此部署的固定服务器</small>
+                  <small>已锁定的服务器地址</small>
                   <strong>{homeserver}</strong>
                 </div>
-                <span className="fixed-tag">固定</span>
+                <span className="fixed-tag">固定部署</span>
               </div>
             ) : (
               <label className="field">
                 <span>Matrix 服务器地址</span>
                 <div className="connection-input">
-                  <Globe2 size={18} />
+                  <Globe2 size={17} />
                   <input
                     aria-label="Matrix 服务器地址"
                     type="url"
@@ -226,9 +258,9 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
                     <option key={s} value={s} />
                   ))}
                 </datalist>
-                <small>输入服务器的完整地址，自动检测可用的登录方式。</small>
               </label>
             )}
+
             <div
               className={`connection-state ${discovery ? "ready" : ""}`}
               role="status"
@@ -236,31 +268,25 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
               {checking ? (
                 <>
                   <LoaderCircle size={14} className="spin" />
-                  正在检测服务器的登录方式…
+                  <span>正在检测服务器认证能力…</span>
                 </>
               ) : discovery ? (
                 <>
-                  <Check size={14} />
-                  服务器已连接
-                  <span>
-                    {discovery.oauth
-                      ? "OAuth 认证"
-                      : discovery.sso
-                        ? "单点登录"
-                        : discovery.password
-                          ? "账号密码"
-                          : "其他认证方式"}
-                  </span>
+                  <CheckCircle2 size={14} />
+                  <span>已连接</span>
+                  <span className="state-pill">{authLabel}</span>
                 </>
               ) : (
                 <>
-                  <span className="dot" />
-                  等待连接服务器
+                  <span className="dot muted-dot" />
+                  <span>等待输入有效的服务器地址</span>
                 </>
               )}
               <button
                 type="button"
+                className="state-refresh"
                 aria-label="重新检测服务器"
+                title="重新检测服务器"
                 disabled={checking || busy || !homeserver}
                 onClick={() => {
                   setError("");
@@ -271,18 +297,55 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
               </button>
             </div>
           </div>
+
           <ErrorBox error={error || config.error} />
+
           {discovery && (
             <div className="authentication-area">
-              {auth && !passwordMode ? (
+              {isOidc ? (
                 <>
                   <div className="auth-explanation">
                     <span className="auth-icon">
                       <ShieldCheck size={24} />
                     </span>
-                    <h3>通过服务器认证登录</h3>
+                    <h3>
+                      {discovery.nativeOidc
+                        ? "使用原生 OIDC 认证登录"
+                        : "使用 OIDC 认证登录"}
+                    </h3>
                     <p>
-                      即将前往服务器的认证页面。
+                      当前服务器已启用 OIDC 统一认证。
+                      <br />
+                      点击下方按钮前往认证页，完成后自动返回控制台。
+                    </p>
+                    {discovery.issuer && (
+                      <code className="issuer-pill">{discovery.issuer}</code>
+                    )}
+                  </div>
+                  <Button
+                    kind="primary auth-submit"
+                    disabled={busy || checking}
+                    onClick={redirect}
+                  >
+                    {busy ? (
+                      <LoaderCircle className="spin" size={17} />
+                    ) : (
+                      <>
+                        前往 OIDC 认证登录
+                        <ArrowRight size={17} />
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : isSso && !passwordMode ? (
+                <>
+                  <div className="auth-explanation">
+                    <span className="auth-icon">
+                      <ShieldCheck size={24} />
+                    </span>
+                    <h3>通过服务器单点登录</h3>
+                    <p>
+                      即将前往服务器的 SSO 认证页面。
                       <br />
                       完成验证后，自动返回管理中心。
                     </p>
@@ -308,8 +371,9 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
                       </>
                     )}
                   </Button>
-                  {discovery.password && (
+                  {allowPassword && (
                     <button
+                      type="button"
                       className="method-switch"
                       onClick={() => setPasswordMode(true)}
                       disabled={busy}
@@ -318,8 +382,9 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
                     </button>
                   )}
                 </>
-              ) : discovery.password ? (
+              ) : allowPassword ? (
                 <form
+                  className="auth-form"
                   onSubmit={(e) => {
                     e.preventDefault();
                     login("password");
@@ -358,82 +423,91 @@ export default function Login({ onLogin }: { onLogin: (s: Session) => void }) {
                       <LoaderCircle className="spin" size={17} />
                     ) : (
                       <>
-                        登录工作区
+                        登录管理中心
                         <ArrowRight size={17} />
                       </>
                     )}
                   </Button>
-                  {auth && (
+                  {isSso && (
                     <button
                       type="button"
                       className="method-switch"
                       onClick={() => setPasswordMode(false)}
                       disabled={busy}
                     >
-                      返回服务器认证登录
+                      返回单点登录
                     </button>
                   )}
                 </form>
               ) : (
                 <p className="notice">
-                  服务器未提供可用的网页登录方式，请检查服务器认证配置。
+                  服务器未提供可用的网页登录方式，可使用已有管理员令牌登录或检查认证配置。
                 </p>
               )}
+
               {discovery.warning && (
                 <p className="auth-warning">{discovery.warning}</p>
               )}
-              <details className="token-alternative">
-                <summary>
-                  <KeyRound size={13} />
-                  使用已有管理员令牌
-                </summary>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    login("token");
-                  }}
-                >
-                  <label className="field">
-                    <span>Access Token</span>
-                    <input
-                      required
-                      type="password"
-                      value={token}
-                      disabled={busy}
-                      autoComplete="off"
-                      onChange={(e) => setToken(e.target.value)}
-                      placeholder="管理员访问令牌"
-                    />
-                  </label>
-                  <Button type="submit" disabled={busy || checking}>
-                    验证并登录
-                    <ArrowRight size={14} />
-                  </Button>
-                </form>
-              </details>
+
+              {!isOidc && (
+                <details className="token-alternative">
+                  <summary>
+                    <KeyRound size={14} />
+                    使用已有管理员令牌
+                  </summary>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      login("token");
+                    }}
+                  >
+                    <label className="field">
+                      <span>Access Token</span>
+                      <input
+                        required
+                        type="password"
+                        value={token}
+                        disabled={busy}
+                        autoComplete="off"
+                        onChange={(e) => setToken(e.target.value)}
+                        placeholder="粘贴管理员访问令牌"
+                      />
+                    </label>
+                    <Button type="submit" disabled={busy || checking}>
+                      验证并登录
+                      <ArrowRight size={14} />
+                    </Button>
+                  </form>
+                </details>
+              )}
             </div>
           )}
+
           {!discovery && !checking && !error && (
             <div className="await-connection">
-              <Globe2 size={30} />
+              <span className="await-icon">
+                <Globe2 size={24} />
+              </span>
               <p>
                 {config.loading
                   ? "正在读取部署配置…"
-                  : "填写服务器地址后，登录入口将在这里显示。"}
+                  : "填写完整的 Matrix 服务器地址后，登录入口将自动呈现。"}
               </p>
             </div>
           )}
+
           <div className="access-card-footer">
             <ShieldCheck size={14} />
-            登录凭据仅在服务端保管
+            <span>凭据仅存服务端 · 退出即撤销本次会话</span>
           </div>
         </section>
       </main>
+
       <footer className="access-footer">
         <span>
-          TUWUNEL ADMIN <b>1.4</b>
+          Tuwunel Admin <b>v{config.data?.version || "1.5.0"}</b>
         </span>
-        <span>开放连接，自主管理。</span>
+        <span>开放连接 · 自主管理</span>
       </footer>
     </div>
   );

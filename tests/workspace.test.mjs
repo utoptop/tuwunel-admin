@@ -84,6 +84,21 @@ async function fixture(t, extraConfig = () => "") {
       return users.has(user)
         ? send(users.get(user))
         : send({ errcode: "M_NOT_FOUND" }, 404);
+    const singleMedia = path.match(
+      /^\/_synapse\/admin\/v1\/media\/([^/]+)\/([^/]+)$/,
+    );
+    if (singleMedia && req.method === "DELETE") {
+      if (failMedia) return send({ error: "storage error" }, 500);
+      const mid = singleMedia[2];
+      for (const [, files] of media) {
+        const idx = files.indexOf(mid);
+        if (idx !== -1) {
+          files.splice(idx, 1);
+          return send({ deleted_media: [mid], total: 1 });
+        }
+      }
+      return send({ errcode: "M_NOT_FOUND", error: "Media not found" }, 404);
+    }
     const id = path.match(
       /^\/_synapse\/admin\/(?:v1|v2)\/users\/(.+)\/(media|devices|joined_rooms|accountdata)$/,
     );
@@ -96,11 +111,15 @@ async function fixture(t, extraConfig = () => "") {
           if (failMedia) return send({ deleted_media: [], total: 0 });
           return send({ deleted_media: files.splice(0, 2), total: 2 });
         }
+        const from = Number(u.searchParams.get("from") || 0),
+          limit = Number(u.searchParams.get("limit") || 20),
+          slice = files.slice(from, from + limit);
         return send({
-          media: files
-            .slice(0, Number(u.searchParams.get("limit") || 20))
-            .map((media_id) => ({ media_id })),
+          media: slice.map((media_id) => ({ media_id })),
           total: files.length,
+          ...(from + slice.length < files.length
+            ? { next_token: from + slice.length }
+            : {}),
         });
       }
       if (id[2] === "devices")
@@ -479,12 +498,12 @@ test("restart marks unfinished cleanup interrupted and never replays deletion", 
   );
 });
 
-test("media cleanup processes every batch for multiple users without deactivating accounts", async (t) => {
+test("media cleanup processes every batch for multiple users without deactivating accounts and preserves current avatar by default", async (t) => {
   const f = await fixture(t);
-  f.media.set(
-    signal,
-    Array.from({ length: 251 }, (_, i) => "s" + i),
-  );
+  f.media.set(signal, [
+    "signal",
+    ...Array.from({ length: 251 }, (_, i) => "s" + i),
+  ]);
   f.media.set(
     telegram,
     Array.from({ length: 113 }, (_, i) => "t" + i),
@@ -503,19 +522,74 @@ test("media cleanup processes every batch for multiple users without deactivatin
     await new Promise((r) => setTimeout(r, 10));
   }
   assert.equal(job.status, "complete", JSON.stringify(job));
-  assert.deepEqual(
-    job.users.map((u) => u.deleted).sort((a, b) => a - b),
-    [113, 251],
-  );
+  const sigRow = job.users.find((u) => u.userId === signal);
+  const tgRow = job.users.find((u) => u.userId === telegram);
+  assert.equal(sigRow.deleted, 251);
+  assert.equal(sigRow.preserved, 1);
+  assert.equal(tgRow.deleted, 113);
+  assert.equal(tgRow.preserved, 0);
   assert.ok(job.users.every((u) => u.verified && u.remaining === 0));
-  assert.equal(f.media.get(signal).length, 0);
+  assert.deepEqual(f.media.get(signal), ["signal"]);
   assert.equal(f.media.get(telegram).length, 0);
   assert.ok(!f.calls.some((c) => c.path.includes("/deactivate/")));
   assert.ok(
-    f.calls
-      .filter((c) => c.method === "DELETE")
-      .every((c) => c.query.from === "0" && c.query.limit === "100"),
+    !f.calls.some(
+      (c) =>
+        c.method === "DELETE" &&
+        c.path === `/_synapse/admin/v1/users/${signal}/media`,
+    ),
   );
+  assert.ok(
+    !f.calls.some(
+      (c) =>
+        c.method === "DELETE" && c.path === "/_synapse/admin/v1/media/test/signal",
+    ),
+  );
+  // Explicitly disabling keepAvatar removes the avatar too.
+  const purgeAll = await f.call("/media/jobs", "POST", {
+    users: [signal],
+    confirmation: "删除 1 位用户的全部媒体",
+    keepAvatar: false,
+  });
+  assert.equal(purgeAll.status, 200);
+  for (let i = 0; i < 400; i++) {
+    job = (await f.call("/media/jobs")).data.jobs.find(
+      (j) => j.id === purgeAll.data.id,
+    );
+    if (job.status !== "running") break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(job.status, "complete");
+  assert.equal(f.media.get(signal).length, 0);
+});
+test("bridge directory separates unerased bridge users from erased archive and skips erased in bulk preview", async (t) => {
+  const f = await fixture(t);
+  const id = await start(f, await plan(f, [signal]));
+  const job = await finished(f, id);
+  assert.equal(job.status, "complete", JSON.stringify(job));
+  const pending = (
+    await f.call("/directory", "POST", {
+      group: "bridges",
+      status: "unerased",
+      refresh: true,
+    })
+  ).data;
+  assert.equal(pending.counts.bridgesPending, 2);
+  assert.equal(pending.counts.bridgesErased, 1);
+  assert.equal(pending.total, 2);
+  assert.ok(!pending.users.some((u) => u.name === signal));
+  const archived = (
+    await f.call("/directory", "POST", { group: "bridges", status: "erased" })
+  ).data;
+  assert.equal(archived.total, 1);
+  assert.equal(archived.users[0].name, signal);
+  const preview = await f.call("/bridges/preview", "POST", {
+    all: true,
+    filter: { group: "bridges" },
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.count, 1);
+  assert.equal(preview.data.users[0].name, telegram);
 });
 test("media jobs enforce confirmation, local users, conflicts, cancellation and stalled progress", async (t) => {
   const f = await fixture(t);

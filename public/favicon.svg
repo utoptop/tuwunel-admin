@@ -1,1 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="11" fill="#365de7"/><path d="M11 12h18v5h-6v12h-6V17h-6z" fill="white"/><circle cx="29" cy="28" r="3" fill="#99b0ff"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2997ff"/>
+      <stop offset="100%" stop-color="#0066cc"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="32" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" stroke="#ffffff" stroke-opacity="0.22" stroke-width="1.5"/>
+  <rect width="64" height="32" rx="16" fill="url(#shine)"/>
+  <path d="M17 20.5C17 19.1193 18.1193 18 19.5 18H44.5C45.8807 18 47 19.1193 47 20.5V24.5C47 25.8807 45.8807 27 44.5 27H36.5V44.5C36.5 45.8807 35.3807 47 34 47H30C28.6193 47 27.5 45.8807 27.5 44.5V27H19.5C18.1193 27 17 25.8807 17 24.5V20.5Z" fill="white"/>
+  <circle cx="44" cy="43" r="4.5" fill="white" fill-opacity="0.88"/>
+</svg>

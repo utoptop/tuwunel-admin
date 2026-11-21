@@ -1,6 +1,6 @@
 [package]
 name = "tuwunel-admin"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 default-run = "tuwunel-admin"
 rust-version = "1.93"

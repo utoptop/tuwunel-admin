@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { admin, request, fmtDate, bytes, type Data, type Session } from "./api";
 import {
@@ -36,11 +37,23 @@ const userId = (value: string, session: Session) =>
     ? value
     : `@${value}:${session.userId.slice(session.userId.indexOf(":") + 1)}`;
 function Status({ user }: { user: Data }) {
+  if (user.erased) {
+    return <Badge tone="muted">已擦除</Badge>;
+  }
   return (
     <Badge tone={user.deactivated ? "red" : user.locked ? "amber" : "green"}>
       {user.deactivated ? "已停用" : user.locked ? "已锁定" : "正常"}
     </Badge>
   );
+}
+function localAvatarId(avatarUrl: string | undefined, userId: string): string {
+  if (!avatarUrl?.startsWith("mxc://")) return "";
+  const rest = avatarUrl.slice(6);
+  const slash = rest.indexOf("/");
+  if (slash <= 0) return "";
+  const server = rest.slice(0, slash);
+  const domain = userId.slice(userId.indexOf(":") + 1);
+  return server === domain ? rest.slice(slash + 1) : "";
 }
 export function UsersPage({
   session,
@@ -56,6 +69,7 @@ export function UsersPage({
     [group, setGroup] = useState("regular"),
     [checked, setChecked] = useState<string[]>([]),
     [cleanup, setCleanup] = useState<Data | null>(null);
+  const isBridge = !["regular", "all"].includes(group);
   const directoryFilter = { search: query, group, status: filter };
   const result = useInfinite(
     (from, refresh) =>
@@ -70,9 +84,19 @@ export function UsersPage({
     result.reload();
   };
   const switchGroup = (value: string) => {
+    const nextIsBridge = !["regular", "all"].includes(value);
+    if (nextIsBridge && !isBridge) {
+      setFilter("unerased");
+    } else if (!nextIsBridge && isBridge && ["unerased", "erased"].includes(filter)) {
+      setFilter("all");
+    }
     setGroup(value);
     setChecked([]);
   };
+  const bridgeGroups =
+    filter === "unerased"
+      ? result.data?.pendingGroups || result.data?.groups || {}
+      : result.data?.groups || {};
   const create = () =>
     operate({
       title: "创建用户",
@@ -134,16 +158,17 @@ export function UsersPage({
       <div className="directory-tabs" role="group" aria-label="用户分类">
         {[
           ["regular", "普通用户", result.data?.counts?.regular],
-          ["bridges", "桥接用户", result.data?.counts?.bridges],
+          [
+            "bridges",
+            "桥接用户",
+            result.data?.counts?.bridgesPending ?? result.data?.counts?.bridges,
+          ],
           ["all", "全部账号", result.data?.counts?.all],
         ].map(([key, label, count]) => (
           <button
             key={key}
             className={
-              group === key ||
-              (key === "bridges" && !["regular", "all"].includes(group))
-                ? "active"
-                : ""
+              group === key || (key === "bridges" && isBridge) ? "active" : ""
             }
             onClick={() => switchGroup(key)}
           >
@@ -152,12 +177,41 @@ export function UsersPage({
           </button>
         ))}
       </div>
-      {!["regular", "all"].includes(group) && (
+      {isBridge && (
         <div className="bridge-tools">
-          <p>
-            根据 Signal UUID、Telegram 数字 ID
-            或部署规则分类。请核对目标并先停止对应桥接，再清理账号和本地媒体。
-          </p>
+          <div className="bridge-tools-copy">
+            <div className="bridge-subtabs" role="group" aria-label="桥接状态">
+              {[
+                [
+                  "unerased",
+                  "待清理",
+                  result.data?.counts?.bridgesPending,
+                ],
+                [
+                  "erased",
+                  "已擦除归档",
+                  result.data?.counts?.bridgesErased,
+                ],
+                ["all", "全部桥接", result.data?.counts?.bridges],
+              ].map(([key, label, count]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={filter === key ? "active" : ""}
+                  onClick={() => {
+                    setFilter(key);
+                    setChecked([]);
+                  }}
+                >
+                  {label}
+                  <span>{count ?? "—"}</span>
+                </button>
+              ))}
+            </div>
+            <p>
+              按 Signal UUID、Telegram 数字 ID 或部署规则识别。清理完成后已擦除账号自动归入「已擦除归档」，请先停止对应桥接服务再执行清理。
+            </p>
+          </div>
           <div className="actions">
             <Button
               disabled={!checked.length}
@@ -167,10 +221,10 @@ export function UsersPage({
             </Button>
             <Button
               kind="danger-soft"
-              disabled={!result.data?.total}
+              disabled={!result.data?.total || filter === "erased"}
               onClick={() => setCleanup({ all: true, filter: directoryFilter })}
             >
-              预览清理此筛选的全部用户
+              预览清理待处理桥接
             </Button>
           </div>
         </div>
@@ -183,9 +237,15 @@ export function UsersPage({
                 ? "成员目录"
                 : group === "all"
                   ? "全部账号"
-                  : "桥接成员目录"}
+                  : filter === "erased"
+                    ? "已擦除的桥接账号（ID 占位归档）"
+                    : "待清理桥接成员"}
             </h2>
-            <p>当前服务器上的用户与访问权限</p>
+            <p>
+              {isBridge && filter === "erased"
+                ? "Matrix 协议保留已擦除账号的 ID 占位以防重用，资料、设备与媒体均已清空"
+                : "当前服务器上的用户与访问权限"}
+            </p>
           </div>
           <Badge>
             {result.data?.total === undefined
@@ -202,41 +262,57 @@ export function UsersPage({
               setChecked([]);
             }}
           >
-            <Search size={17} />
+            <Search size={16} />
             <input
               aria-label="搜索用户"
               placeholder="搜索用户名或显示名称…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="清空搜索"
+                onClick={() => {
+                  setSearch("");
+                  setQuery("");
+                  setChecked([]);
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
             <button type="submit">搜索</button>
           </form>
-          <select
-            aria-label="用户筛选"
-            value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value);
-              setChecked([]);
-            }}
-          >
-            <option value="all">全部状态（含停用）</option>
-            <option value="active">未停用用户</option>
-            <option value="admin">管理员</option>
-          </select>
-          {!["regular", "all"].includes(group) && (
+          {!isBridge && (
+            <select
+              aria-label="用户筛选"
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                setChecked([]);
+              }}
+            >
+              <option value="all">全部状态（含停用）</option>
+              <option value="active">正常活跃用户</option>
+              <option value="unerased">未擦除用户</option>
+              <option value="erased">已擦除归档</option>
+              <option value="admin">仅管理员</option>
+            </select>
+          )}
+          {isBridge && (
             <select
               aria-label="桥接类型"
               value={group}
               onChange={(e) => switchGroup(e.target.value)}
             >
-              <option value="bridges">全部桥接</option>
-              {Object.entries(result.data?.groups || {}).map(
-                ([name, count]) => (
-                  <option key={name} value={name}>
-                    {name}（{String(count)}）
-                  </option>
-                ),
-              )}
+              <option value="bridges">全部桥接类型</option>
+              {Object.entries(bridgeGroups).map(([name, count]) => (
+                <option key={name} value={name}>
+                  {name}（{String(count)}）
+                </option>
+              ))}
             </select>
           )}
           <Refresh onClick={reload} />
@@ -245,7 +321,15 @@ export function UsersPage({
         {result.loading && !result.data ? (
           <Loading />
         ) : !result.data?.users?.length ? (
-          <Empty />
+          <Empty
+            text={
+              isBridge &&
+              filter === "unerased" &&
+              (result.data?.counts?.bridgesErased || 0) > 0
+                ? `所有桥接用户均已完成停用与擦除。Tuwunel 按 Matrix 协议保留了 ${result.data?.counts?.bridgesErased} 条已擦除的 ID 占位，可切换至「已擦除归档」查看。`
+                : "暂无匹配的用户"
+            }
+          />
         ) : (
           <div className="table-scroll">
             <table>
@@ -352,7 +436,10 @@ export function UsersPage({
           total={result.data?.total}
         />
       </Panel>
-      <BridgeJobs onRetry={(ids) => setCleanup({ ids })} />
+      <BridgeJobs
+        onRetry={(ids) => setCleanup({ ids })}
+        onComplete={reload}
+      />
       {cleanup && (
         <BridgeCleanup
           selection={cleanup}
@@ -421,6 +508,7 @@ function UserDetail({
     (v: Data) => v.user_id === id,
   );
   const u = detail.data || {};
+  const avatarMediaId = localAvatarId(u.avatar_url, id);
   const action = (
     title: string,
     endpoint: string,
@@ -486,9 +574,14 @@ function UserDetail({
                   </div>
                   <div>
                     <small>资料擦除</small>
-                    <strong>{u.erased ? "已标记擦除" : "未擦除"}</strong>
+                    <strong>{u.erased ? "已擦除（保留 ID 占位）" : "未擦除"}</strong>
                   </div>
                 </div>
+                {u.erased && (
+                  <p className="notice">
+                    此账号已完成停用并擦除（个人资料、登录设备、房间成员与账户数据均已清空）。Matrix / Tuwunel 协议会保留已擦除的 Matrix ID 占位以防重用，不会从数据库物理删除 ID。
+                  </p>
+                )}
                 <div className="creation-source">
                   <small>账号创建来源 IP</small>
                   <strong>{creation?.ip || "暂无可核实的注册记录"}</strong>
@@ -626,7 +719,7 @@ function UserDetail({
                   )}
                   <Button
                     kind="danger-soft"
-                    disabled={id === session.userId}
+                    disabled={id === session.userId || Boolean(u.erased)}
                     onClick={() =>
                       operate({
                         title: "停用并擦除用户资料",
@@ -645,7 +738,7 @@ function UserDetail({
                     }
                   >
                     <Trash2 size={15} />
-                    停用并擦除
+                    {u.erased ? "已完成擦除" : "停用并擦除"}
                   </Button>
                 </div>
                 <details className="raw">
@@ -784,7 +877,7 @@ function UserDetail({
                   onClick={() => setMediaCleanup(true)}
                 >
                   <Trash2 size={15} />
-                  清理此用户全部媒体
+                  清理此用户媒体（默认保留头像）
                 </Button>
               </div>
               {info.data?.media?.length ? (
@@ -799,44 +892,58 @@ function UserDetail({
                       </tr>
                     </thead>
                     <tbody>
-                      {info.data.media.map((m: Data) => (
-                        <tr key={m.media_id}>
-                          <td>
-                            <strong>{m.upload_name || m.media_id}</strong>
-                            <small>{m.media_type}</small>
-                          </td>
-                          <td>{bytes(m.media_length)}</td>
-                          <td>{fmtDate(m.created_ts)}</td>
-                          <td>
-                            <Button
-                              kind="danger-soft"
-                              onClick={() =>
-                                operate({
-                                  title: "删除媒体",
-                                  description: m.media_id,
-                                  danger: true,
-                                  run: () =>
-                                    admin(
-                                      "deleteMedia",
-                                      {
-                                        server_name: id.slice(
-                                          id.indexOf(":") + 1,
-                                        ),
-                                        media_id: m.media_id,
-                                      },
-                                      {},
-                                      {},
-                                      true,
-                                    ),
-                                  onDone: info.reload,
-                                })
-                              }
-                            >
-                              删除
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
+                      {info.data.media.map((m: Data) => {
+                        const isAvatar =
+                          Boolean(avatarMediaId) &&
+                          m.media_id === avatarMediaId;
+                        return (
+                          <tr key={m.media_id}>
+                            <td>
+                              <div className="inline">
+                                <strong>{m.upload_name || m.media_id}</strong>
+                                {isAvatar && (
+                                  <Badge tone="indigo">当前头像</Badge>
+                                )}
+                              </div>
+                              <small>{m.media_type}</small>
+                            </td>
+                            <td className="num">{bytes(m.media_length)}</td>
+                            <td className="num">{fmtDate(m.created_ts)}</td>
+                            <td>
+                              <Button
+                                kind="danger-soft"
+                                onClick={() =>
+                                  operate({
+                                    title: isAvatar
+                                      ? "删除用户当前头像媒体"
+                                      : "删除媒体",
+                                    description: isAvatar
+                                      ? `注意：${m.media_id} 是该用户当前正在使用的头像，删除后头像将无法加载！`
+                                      : m.media_id,
+                                    danger: true,
+                                    run: () =>
+                                      admin(
+                                        "deleteMedia",
+                                        {
+                                          server_name: id.slice(
+                                            id.indexOf(":") + 1,
+                                          ),
+                                          media_id: m.media_id,
+                                        },
+                                        {},
+                                        {},
+                                        true,
+                                      ),
+                                    onDone: info.reload,
+                                  })
+                                }
+                              >
+                                删除
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -921,6 +1028,19 @@ export function RoomsPage({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="清空搜索"
+                onClick={() => {
+                  setSearch("");
+                  setQuery("");
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
             <button type="submit">搜索</button>
           </form>
           <Badge>连续滚动 · 按名称排序</Badge>

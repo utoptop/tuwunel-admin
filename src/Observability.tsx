@@ -27,13 +27,16 @@ function Trend({ history, field }: { history: Data[]; field: string }) {
     .map((v) => v[field])
     .filter((v) => typeof v === "number");
   if (values.length < 2)
-    return <div className="chart-wait">等待下一次采样</div>;
-  const max = Math.max(...values, 1),
-    points = values
-      .map(
-        (v, i) => `${(i / (values.length - 1)) * 300},${58 - (v / max) * 50}`,
-      )
-      .join(" ");
+    return <div className="chart-wait">等待下一次采样…</div>;
+  const max = Math.max(...values, 1);
+  const coords = values.map((v, i) => [
+    (i / (values.length - 1)) * 300,
+    56 - (v / max) * 46,
+  ]);
+  const line = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `0,62 ${line} 300,62`;
+  const [lastX, lastY] = coords[coords.length - 1];
+  const gradId = `grad-${field}`;
   return (
     <svg
       className="trend"
@@ -42,14 +45,24 @@ function Trend({ history, field }: { history: Data[]; field: string }) {
       aria-label="最近采样趋势"
       role="img"
     >
-      <path d="M0 60H300 M0 30H300" stroke="currentColor" opacity=".08" />
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0.01" />
+        </linearGradient>
+      </defs>
+      <path d="M0 58H300 M0 32H300" stroke="currentColor" opacity=".08" />
+      <polygon points={area} fill={`url(#${gradId})`} />
       <polyline
-        points={points}
+        points={line}
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
+      <circle cx={lastX} cy={lastY} r="3" fill="currentColor" />
     </svg>
   );
 }

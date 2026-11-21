@@ -2,7 +2,7 @@
 # observer UID/GID 应与 Tuwunel 一致，同时使面板 UID 1000 能读取快照。
 services:
   tuwunel-observer:
-    image: utoptop/tuwunel-admin:1.4
+    image: utoptop/tuwunel-admin:1.5
     entrypoint: ["tuwunel-observer"]
     command: ["--config", "/etc/observer.toml"]
     pid: "service:tuwunel"

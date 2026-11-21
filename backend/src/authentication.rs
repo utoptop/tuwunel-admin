@@ -27,12 +27,24 @@ pub struct Discovery {
     pub sso: bool,
     pub providers: Vec<Value>,
     pub metadata: Option<Value>,
+    pub native_oidc: bool,
     pub warning: Option<String>,
     pub expires: u64,
 }
 impl Discovery {
     fn public(&self) -> Value {
-        json!({"homeserver":self.matrix.origin,"password":self.password,"sso":self.sso,"providers":self.providers,"oauth":self.metadata.is_some(),"preferred":if self.metadata.is_some(){"oauth"}else if self.sso && !self.password{"sso"}else{"password"},"warning":self.warning})
+        let oauth = self.metadata.is_some();
+        json!({
+            "homeserver": self.matrix.origin,
+            "password": self.password && !oauth,
+            "sso": self.sso && !oauth,
+            "providers": if oauth { Value::Array(vec![]) } else { json!(self.providers) },
+            "oauth": oauth,
+            "nativeOidc": self.native_oidc,
+            "issuer": self.metadata.as_ref().and_then(|m| m["issuer"].as_str()),
+            "preferred": if oauth { "oauth" } else if self.sso && !self.password { "sso" } else { "password" },
+            "warning": self.warning
+        })
     }
 }
 #[derive(Clone)]
@@ -220,12 +232,22 @@ pub async fn discover(state: &AppState, input: Option<&str>) -> Result<Discovery
     let sso_flow = list.iter().find(|v| v["type"] == "m.login.sso");
     let sso = sso_flow.is_some() && list.iter().any(|v| v["type"] == "m.login.token");
     let providers=sso_flow.and_then(|v|v["identity_providers"].as_array()).map(|v|v.iter().take(20).filter_map(|p|Some(json!({"id":p["id"].as_str()?,"name":p["name"].as_str().unwrap_or("单点登录")}))).collect()).unwrap_or_default();
+    let native_oidc = meta.as_ref().is_some_and(|m| {
+        [
+            "authorization_endpoint",
+            "token_endpoint",
+            "registration_endpoint",
+        ]
+        .iter()
+        .any(|k| m[k].as_str().is_some_and(|u| u.contains("/_tuwunel/oidc/")))
+    });
     let d = Discovery {
         matrix,
         password,
         sso,
         providers,
         metadata: meta,
+        native_oidc,
         warning,
         expires: now() + 60000,
     };

@@ -49,7 +49,7 @@ const pages = [
   ["tokens", "注册令牌", KeyRound],
   ["federation", "联邦连接", Globe2],
   ["tasks", "后台任务", Terminal],
-  ["audit", "操作审计", Activity],
+  ["audit", "操作审计", ShieldCheck],
   ["api", "高级 API", Code2],
 ] as const;
 export default function App() {
@@ -154,7 +154,7 @@ export default function App() {
           </a>
           <div className="version">
             <span>tuwunel admin</span>
-            <Badge>v1.4</Badge>
+            <Badge>v1.5</Badge>
           </div>
         </div>
       </aside>
@@ -176,19 +176,20 @@ export default function App() {
           </div>
           <div className="topbar-right">
             <ThemeToggle />
-            <Badge tone="green">
-              <ShieldCheck size={12} />
-              管理员
-            </Badge>
-            <span className="top-separator" />
-            <Avatar
-              name={name}
-              mxc={context.data?.profile?.avatar_url}
-              homeserver={session.homeserver}
-            />
-            <span className="top-name">{name}</span>
+            <div className="admin-chip">
+              <Avatar
+                name={name}
+                mxc={context.data?.profile?.avatar_url}
+                homeserver={session.homeserver}
+              />
+              <span className="top-name">{name}</span>
+              <Badge tone="green">
+                <ShieldCheck size={11} />
+                管理员
+              </Badge>
+            </div>
             <Button
-              kind="icon"
+              kind="icon logout-btn"
               title="退出登录"
               onClick={() =>
                 setOperation({
