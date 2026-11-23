@@ -187,7 +187,7 @@ impl Config {
                 return Err(AppError::new(500, "auth.clients 配置无效"));
             }
         }
-        if !(1..=168).contains(&self.limits.session_hours)
+        if !(1..=2160).contains(&self.limits.session_hours)
             || !(1..=10000).contains(&self.limits.login_attempts)
             || !(1..=86400).contains(&self.limits.login_window_seconds)
             || !(1..=100000).contains(&self.limits.max_sessions)

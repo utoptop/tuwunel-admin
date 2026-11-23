@@ -18,7 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -39,6 +39,33 @@ pub struct Session {
     pub verified: u64,
     pub matrix: Matrix,
     pub oauth: Option<Arc<Mutex<OAuthSession>>>,
+}
+#[derive(Serialize, Deserialize)]
+struct PersistedSession {
+    token: String,
+    owned: bool,
+    user_id: String,
+    csrf: String,
+    expires: u64,
+    origin: String,
+    oauth: Option<OAuthSession>,
+}
+impl Session {
+    async fn to_persisted(&self) -> PersistedSession {
+        let oauth = match &self.oauth {
+            Some(oauth) => Some(oauth.lock().await.clone()),
+            None => None,
+        };
+        PersistedSession {
+            token: self.token.clone(),
+            owned: self.owned,
+            user_id: self.user_id.clone(),
+            csrf: self.csrf.clone(),
+            expires: self.expires,
+            origin: self.matrix.origin.clone(),
+            oauth,
+        }
+    }
 }
 pub struct Inner {
     pub config: Config,
@@ -61,12 +88,46 @@ pub type AppState = Arc<Inner>;
 impl Inner {
     pub fn new(mut config: Config) -> Result<AppState> {
         config.validate()?;
-        let store = Arc::new(StdMutex::new(Store::open(&config)?));
+        let mut store_inner = Store::open(&config)?;
+        let current = now();
+        let mut restored = HashMap::new();
+        let mut pruned = false;
+        let existing = std::mem::take(&mut store_inner.data.sessions);
+        for (id, sealed) in existing {
+            let keep = store_inner
+                .unseal(&sealed)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<PersistedSession>(&raw).ok())
+                .filter(|p| p.expires > current)
+                .and_then(|p| {
+                    let matrix = Matrix::new(&config, &p.origin).ok()?;
+                    Some(Session {
+                        token: p.token,
+                        owned: p.owned,
+                        user_id: p.user_id,
+                        csrf: p.csrf,
+                        expires: p.expires,
+                        verified: 0,
+                        matrix,
+                        oauth: p.oauth.map(|o| Arc::new(Mutex::new(o))),
+                    })
+                });
+            if let Some(session) = keep {
+                restored.insert(id.clone(), session);
+                store_inner.data.sessions.insert(id, sealed);
+            } else {
+                pruned = true;
+            }
+        }
+        if pruned {
+            let _ = store_inner.save();
+        }
+        let store = Arc::new(StdMutex::new(store_inner));
         Ok(Arc::new(Self {
             config,
             store,
             catalog: catalog::catalog(),
-            sessions: RwLock::new(HashMap::new()),
+            sessions: RwLock::new(restored),
             attempts: Mutex::new(HashMap::new()),
             discovery_attempts: Mutex::new(HashMap::new()),
             discovery: Mutex::new(HashMap::new()),
@@ -132,6 +193,25 @@ fn cookie(state: &AppState, value: &str, max_age: u64) -> String {
 fn session_json(s: &Session) -> Value {
     json!({"userId":s.user_id,"csrf":s.csrf,"homeserver":s.matrix.origin,"expires":s.expires})
 }
+async fn persist_session(state: &AppState, id: &str, session: &Session) {
+    let id = id.to_owned();
+    let persisted = session.to_persisted().await;
+    let _ = store::access(&state.store, true, move |store| {
+        let raw = serde_json::to_string(&persisted).map_err(AppError::internal)?;
+        let sealed = store.seal(&raw)?;
+        store.data.sessions.insert(id, sealed);
+        Ok(())
+    })
+    .await;
+}
+async fn forget_session(state: &AppState, id: &str) {
+    let id = id.to_owned();
+    let _ = store::access(&state.store, true, move |store| {
+        store.data.sessions.remove(&id);
+        Ok(())
+    })
+    .await;
+}
 pub async fn auth(
     state: &AppState,
     headers: &HeaderMap,
@@ -155,6 +235,7 @@ pub async fn auth(
             return Err(AppError::new(403, "CSRF 校验失败，请刷新页面"));
         }
     }
+    let mut token_rotated = false;
     if let Some(oauth) = &session.oauth {
         let mut oauth = oauth.lock().await;
         match oauth.current(&state.config, &session.matrix.origin).await {
@@ -162,6 +243,7 @@ pub async fn auth(
                 if token != session.token {
                     session.token = token;
                     session.verified = 0;
+                    token_rotated = true;
                     if let Some(s) = state.sessions.write().await.get_mut(&id) {
                         s.token = session.token.clone();
                         s.verified = 0;
@@ -169,10 +251,15 @@ pub async fn auth(
                 }
             }
             Err(error) => {
+                drop(oauth);
                 state.sessions.write().await.remove(&id);
+                forget_session(state, &id).await;
                 return Err(error);
             }
         }
+    }
+    if token_rotated {
+        persist_session(state, &id, &session).await;
     }
     if now() - session.verified > 60000 {
         let verification = session
@@ -189,6 +276,7 @@ pub async fn auth(
         if let Err(e) = verification {
             if e.status == StatusCode::UNAUTHORIZED || e.status == StatusCode::FORBIDDEN {
                 state.sessions.write().await.remove(&id);
+                forget_session(state, &id).await;
             }
             return Err(e);
         }
@@ -402,6 +490,7 @@ pub async fn finish_login(
         oauth,
     };
     let id = random_hex(32);
+    let old_id = cookie_id(&headers);
     // Reserve capacity before disk I/O; never hold the session map while awaiting network.
     let old = {
         let mut sessions = state.sessions.write().await;
@@ -410,7 +499,7 @@ pub async fn finish_login(
             revoke(state.config.clone(), session).await;
             return Err(AppError::new(429, "当前会话数量已达上限，请稍后重试"));
         }
-        let old = cookie_id(&headers).and_then(|id| sessions.remove(&id));
+        let old = old_id.as_ref().and_then(|id| sessions.remove(id));
         sessions.insert(id.clone(), session.clone());
         old
     };
@@ -419,7 +508,22 @@ pub async fn finish_login(
             tokio::spawn(revoke(state.config.clone(), old));
         }
     }
-    if let Err(error) = audit(&state, &session, "管理员登录", "", "success").await {
+    let persisted = session.to_persisted().await;
+    let saved_id = id.clone();
+    let origin = session.matrix.origin.clone();
+    let user = session.user_id.clone();
+    if let Err(error) = store::access(&state.store, true, move |store| {
+        if let Some(old_id) = old_id {
+            store.data.sessions.remove(&old_id);
+        }
+        let raw = serde_json::to_string(&persisted).map_err(AppError::internal)?;
+        let sealed = store.seal(&raw)?;
+        store.data.sessions.insert(saved_id, sealed);
+        store.audit(&origin, &user, "管理员登录", "", "success");
+        Ok(())
+    })
+    .await
+    {
         state.sessions.write().await.remove(&id);
         revoke(state.config.clone(), session).await;
         return Err(error);
@@ -459,7 +563,14 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
     let (id, s) = auth(&state, &headers, true).await?;
     state.sessions.write().await.remove(&id);
     tokio::spawn(revoke(state.config.clone(), s.clone()));
-    audit(&state, &s, "退出登录", "", "success").await?;
+    let origin = s.matrix.origin.clone();
+    let user = s.user_id.clone();
+    store::access(&state.store, true, move |store| {
+        store.data.sessions.remove(&id);
+        store.audit(&origin, &user, "退出登录", "", "success");
+        Ok(())
+    })
+    .await?;
     let mut response = Json(json!({"ok":true})).into_response();
     response.headers_mut().insert(
         "set-cookie",
@@ -632,17 +743,28 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let expired = {
+            let (expired_ids, expired) = {
                 let mut sessions = state.sessions.write().await;
                 let ids = sessions
                     .iter()
                     .filter(|(_, s)| s.expires <= now())
                     .map(|(id, _)| id.clone())
                     .collect::<Vec<_>>();
-                ids.into_iter()
-                    .filter_map(|id| sessions.remove(&id))
-                    .collect::<Vec<_>>()
+                let removed = ids
+                    .iter()
+                    .filter_map(|id| sessions.remove(id))
+                    .collect::<Vec<_>>();
+                (ids, removed)
             };
+            if !expired_ids.is_empty() {
+                let _ = store::access(&state.store, true, move |store| {
+                    for id in expired_ids {
+                        store.data.sessions.remove(&id);
+                    }
+                    Ok(())
+                })
+                .await;
+            }
             for s in expired {
                 tokio::spawn(revoke(state.config.clone(), s));
             }

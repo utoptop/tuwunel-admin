@@ -42,6 +42,8 @@ pub struct Data {
     pub cleanup_jobs: BTreeMap<String, Value>,
     #[serde(default)]
     pub media_jobs: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub sessions: BTreeMap<String, String>,
     pub audit: Vec<Value>,
 }
 pub struct Store {

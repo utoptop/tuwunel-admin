@@ -441,15 +441,21 @@ test("authentication discovery cannot use a separate private endpoint without ex
     400,
   );
 });
-test("registered public client IDs survive restart; configured clients skip automatic registration", async (t) => {
+test("registered public client IDs and encrypted OAuth sessions survive restart; configured clients skip automatic registration", async (t) => {
   const up = await upstream(t, { oauth: true });
   const directory = await mkdtemp(join(tmpdir(), "tuwunel-oauth-restart-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let app = await startRust({ homeserver: up.origin, directory });
-  await begin(app);
+  const login = await oauthLogin(app);
+  const cookie = sessionCookie(login.response);
   await app.stop();
   app = await startRust({ homeserver: up.origin, directory });
   try {
+    const survived = await fetch(app.base + "/api/session", {
+      headers: { cookie },
+    });
+    assert.equal(survived.status, 200);
+    assert.equal((await survived.json()).userId, "@admin:test");
     await begin(app);
     assert.equal(up.registrations, 1);
   } finally {

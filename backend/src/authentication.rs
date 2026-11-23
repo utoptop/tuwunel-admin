@@ -65,7 +65,7 @@ enum Flow {
         scope: String,
     },
 }
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct OAuthSession {
     pub access: String,
     refresh: Option<String>,
