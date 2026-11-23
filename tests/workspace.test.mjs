@@ -562,7 +562,7 @@ test("media cleanup processes every batch for multiple users without deactivatin
   assert.equal(job.status, "complete");
   assert.equal(f.media.get(signal).length, 0);
 });
-test("bridge directory separates unerased bridge users from erased archive and skips erased in bulk preview", async (t) => {
+test("bridge directory globally hides erased users from all lists and counts and supports job cancellation", async (t) => {
   const f = await fixture(t);
   const id = await start(f, await plan(f, [signal]));
   const job = await finished(f, id);
@@ -570,19 +570,16 @@ test("bridge directory separates unerased bridge users from erased archive and s
   const pending = (
     await f.call("/directory", "POST", {
       group: "bridges",
-      status: "unerased",
       refresh: true,
     })
   ).data;
-  assert.equal(pending.counts.bridgesPending, 2);
-  assert.equal(pending.counts.bridgesErased, 1);
+  assert.equal(pending.counts.bridges, 2);
+  assert.equal(pending.counts.all, 6);
   assert.equal(pending.total, 2);
   assert.ok(!pending.users.some((u) => u.name === signal));
-  const archived = (
-    await f.call("/directory", "POST", { group: "bridges", status: "erased" })
-  ).data;
-  assert.equal(archived.total, 1);
-  assert.equal(archived.users[0].name, signal);
+  const allUsers = (await f.call("/directory", "POST", { group: "all" })).data;
+  assert.equal(allUsers.total, 6);
+  assert.ok(!allUsers.users.some((u) => u.name === signal));
   const preview = await f.call("/bridges/preview", "POST", {
     all: true,
     filter: { group: "bridges" },
@@ -590,6 +587,11 @@ test("bridge directory separates unerased bridge users from erased archive and s
   assert.equal(preview.status, 200);
   assert.equal(preview.data.count, 1);
   assert.equal(preview.data.users[0].name, telegram);
+  assert.equal(
+    (await f.call("/bridges/jobs/cancel", "POST", { id: "nonexistent" }))
+      .status,
+    404,
+  );
 });
 test("media jobs enforce confirmation, local users, conflicts, cancellation and stalled progress", async (t) => {
   const f = await fixture(t);

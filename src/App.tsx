@@ -212,7 +212,7 @@ export default function App() {
           ) : page === "rooms" ? (
             <RoomsPage session={session} operate={setOperation} />
           ) : page === "media" ? (
-            <MediaPage operate={setOperation} />
+            <MediaPage session={session} operate={setOperation} />
           ) : page === "monitor" ? (
             <Observability />
           ) : page === "tokens" ? (

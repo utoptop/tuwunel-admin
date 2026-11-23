@@ -37,6 +37,16 @@ pub struct Metrics {
     pub received_bytes_per_second: Option<f64>,
     pub sent_bytes_per_second: Option<f64>,
     pub tcp_connections: Option<u64>,
+    #[serde(default)]
+    pub uptime_seconds: Option<u64>,
+    #[serde(default)]
+    pub open_fds: Option<u64>,
+    #[serde(default)]
+    pub max_fds: Option<u64>,
+    #[serde(default)]
+    pub disk_available_bytes: Option<u64>,
+    #[serde(default)]
+    pub disk_total_bytes: Option<u64>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct IpCount {
@@ -108,6 +118,19 @@ const SAFE_KEYS: &[&str] = &[
     "server.listen.port",
     "listening.address",
     "listening.port",
+    "registration.allow",
+    "federation.allow",
+    "media.max_upload_size",
+    "database.backend",
+    "database.cache_capacity_mb",
+    "authentication.oidc.enable",
+    "authentication.oidc.native_auth",
+    "authentication.oidc.issuer_url",
+    "authentication.login.with_password",
+    "authentication.login.oidc_aware_preferred",
+    "authentication.login.via_existing_session",
+    "well_known.client",
+    "well_known.server",
 ];
 fn allowed(key: &str, value: &Value) -> bool {
     SAFE_KEYS.contains(&key)
@@ -315,6 +338,30 @@ pub fn sample(
             })
         })
         .collect::<Vec<_>>();
+    let uptime_seconds = std::fs::read_to_string(config.proc_root.join("uptime"))
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+        .filter(|_| ticks_per_second > 0.)
+        .map(|up| (up - (c.start as f64 / ticks_per_second)).max(0.) as u64);
+    let open_fds = std::fs::read_dir(path.join("fd"))
+        .ok()
+        .map(|entries| entries.count() as u64);
+    let max_fds = std::fs::read_to_string(path.join("limits"))
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|l| {
+                l.strip_prefix("Max open files")?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            })
+        });
+    let disk_dir = config
+        .output_file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let mut m = Metrics {
         at: c.at,
         pid: config.pid,
@@ -325,6 +372,11 @@ pub fn sample(
         } else {
             None
         },
+        uptime_seconds,
+        open_fds,
+        max_fds,
+        disk_available_bytes: fs2::available_space(disk_dir).ok(),
+        disk_total_bytes: fs2::total_space(disk_dir).ok(),
         ..Default::default()
     };
     if let Some(p) = previous.filter(|p| p.start == c.start && p.at < c.at) {

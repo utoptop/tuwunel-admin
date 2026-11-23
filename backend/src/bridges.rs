@@ -105,11 +105,19 @@ fn bridge(config: &BridgeConfig, s: &Session, user: &Value) -> Option<Value> {
             return Some(json!({"name":"Signal","source":"ID 格式匹配","rule":"@signal_<UUID>"}));
         }
     }
-    if let Some(suffix) = local.strip_prefix("telegram_") {
-        if !suffix.is_empty() && suffix.bytes().all(|c| c.is_ascii_digit()) {
-            return Some(
-                json!({"name":"Telegram","source":"ID 格式匹配","rule":"@telegram_<数字>"}),
-            );
+    for (prefix, name, rule) in [
+        ("telegram_", "Telegram", "@telegram_<数字>"),
+        ("whatsapp_", "WhatsApp", "@whatsapp_<数字>"),
+        ("discord_", "Discord", "@discord_<数字>"),
+        ("instagram_", "Instagram", "@instagram_<数字>"),
+        ("meta_", "Meta", "@meta_<数字>"),
+        ("gmessages_", "Google Messages", "@gmessages_<数字>"),
+    ] {
+        if let Some(suffix) = local.strip_prefix(prefix)
+            && !suffix.is_empty()
+            && suffix.bytes().all(|c| c.is_ascii_digit())
+        {
+            return Some(json!({"name": name, "source": "ID 格式匹配", "rule": rule}));
         }
     }
     None
@@ -168,6 +176,9 @@ async fn rows(state: &AppState, s: &Session, refresh: bool) -> Result<Vec<Value>
                 .ok_or_else(|| AppError::new(502, "用户列表缺少 ID"))?;
             if !seen.insert(id.to_owned()) {
                 return Err(AppError::new(502, "用户列表分页重复，请刷新后重试"));
+            }
+            if is_erased(u) {
+                continue;
             }
             let mut u = u.clone();
             u["bridge"] = bridge(&state.config.bridges, s, &u).unwrap_or(Value::Null);
@@ -313,21 +324,42 @@ pub async fn preview(
     }
     let all = rows(&state, &s, true).await?;
     let requested: HashSet<_> = input.ids.iter().collect();
-    let chosen: Vec<_> = all
+    let mut chosen: Vec<Value> = all
         .iter()
         .filter(|u| {
             if input.all {
-                matches(u, &input.filter)
-                    && !u["bridge"].is_null()
-                    && !protected(&s, u)
-                    && (input.filter.status == "erased" || !is_erased(u))
+                matches(u, &input.filter) && !u["bridge"].is_null() && !protected(&s, u)
             } else {
                 u["name"]
                     .as_str()
                     .is_some_and(|id| requested.contains(&id.to_string()))
             }
         })
+        .cloned()
         .collect();
+    if !input.all && chosen.len() < requested.len() {
+        // Allow explicit retry of an already-erased bridge account whose media drain failed mid-way.
+        for req_id in &input.ids {
+            if !chosen.iter().any(|u| u["name"].as_str() == Some(req_id)) {
+                validate_id(req_id)?;
+                if let Ok(mut u) = request(
+                    &s,
+                    Method::GET,
+                    format!("/_synapse/admin/v2/users/{}", encode(req_id)),
+                    None,
+                )
+                .await
+                {
+                    if u["name"].is_null() {
+                        u["name"] = json!(req_id);
+                    }
+                    u["bridge"] = bridge(&state.config.bridges, &s, &u).unwrap_or(Value::Null);
+                    u["protected"] = json!(protected(&s, &u));
+                    chosen.push(u);
+                }
+            }
+        }
+    }
     if chosen.is_empty() || chosen.len() > 10000 || (!input.all && chosen.len() != requested.len())
     {
         return Err(AppError::new(
@@ -407,7 +439,7 @@ pub async fn start(
             if let Some(id)=oldest {store.data.cleanup_jobs.remove(&id);} else {return Err(AppError::new(429,"清理任务过多"));}
         }
         store.audit(&origin, &actor, "开始桥接用户清理", &format!("{} 个用户", targets.len()), "success");
-        store.data.cleanup_jobs.insert(key.clone(),json!({"id":key,"homeserver":origin,"actor":actor,"created":now(),"status":"running","total":targets.len(),"targets":targets,"results":[],"processed":0})); Ok(())
+        store.data.cleanup_jobs.insert(key.clone(),json!({"id":key,"homeserver":origin,"actor":actor,"created":now(),"status":"running","cancelRequested":false,"total":targets.len(),"targets":targets,"results":[],"processed":0})); Ok(())
     }).await?;
     plans.remove(&input.plan);
     drop(plans);
@@ -417,6 +449,32 @@ pub async fn start(
         run(job.0, job.1, headers, key, ids).await;
     });
     Ok(Json(json!({"id":job_id})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cancel {
+    id: String,
+}
+pub async fn cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Payload(input): Payload<Cancel>,
+) -> Result<Json<Value>> {
+    let (_, s) = auth(&state, &headers, true).await?;
+    store::access(&state.store, true, move |store| {
+        let job = store
+            .data
+            .cleanup_jobs
+            .get_mut(&input.id)
+            .filter(|j| j["homeserver"] == s.matrix.origin)
+            .ok_or_else(|| AppError::new(404, "任务不存在"))?;
+        if job["status"] == "running" {
+            job["cancelRequested"] = json!(true);
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(Json(json!({"ok":true})))
 }
 pub async fn jobs(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     let (_, s) = auth(&state, &headers, false).await?;
@@ -669,8 +727,23 @@ async fn clean(state: &AppState, headers: &HeaderMap, id: &str, result: &mut Val
     result["accountVerified"] = json!(true);
     Ok(())
 }
+async fn is_canceled(state: &AppState, key: &str) -> bool {
+    let job = key.to_owned();
+    store::access(&state.store, false, move |store| {
+        Ok(store
+            .data
+            .cleanup_jobs
+            .get(&job)
+            .is_none_or(|j| j["cancelRequested"] == true))
+    })
+    .await
+    .unwrap_or(true)
+}
 async fn run(state: AppState, s: Session, headers: HeaderMap, key: String, ids: Vec<String>) {
     for id in ids {
+        if is_canceled(&state, &key).await {
+            break;
+        }
         let mut row =
             json!({"user_id":id,"mediaDeleted":0,"deactivated":false,"status":"complete"});
         if let Err(error) = clean(&state, &headers, &id, &mut row).await {
@@ -710,7 +783,11 @@ async fn run(state: AppState, s: Session, headers: HeaderMap, key: String, ids: 
                 .unwrap()
                 .iter()
                 .any(|r| r["status"] != "complete");
-            job["status"] = json!(if job["processed"] != job["total"] {
+            job["status"] = json!(if job["cancelRequested"] == true
+                && job["processed"] != job["total"]
+            {
+                "canceled"
+            } else if job["processed"] != job["total"] {
                 "interrupted"
             } else if failed {
                 "partial"

@@ -2,13 +2,42 @@ use crate::{
     app::{AppState, Payload, Session, auth},
     catalog::{AdminRequest, encode},
     error::{AppError, Result},
-    store,
+    store::{self, now},
 };
 use axum::{Json, extract::State, http::HeaderMap};
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+async fn cached_room(state: &AppState, s: &Session, room_id: &str) -> Result<Value> {
+    let key = format!("{}\0{room_id}", s.matrix.origin);
+    if let Some((at, value)) = state.room_cache.lock().await.get(&key).cloned() {
+        if now().saturating_sub(at) < 60_000 {
+            return Ok(value);
+        }
+    }
+    let _permit = state.avatar_limit.acquire().await;
+    let value = s
+        .matrix
+        .request(
+            &s.token,
+            Method::GET,
+            &format!("/_synapse/admin/v1/rooms/{}", encode(room_id)),
+            None,
+        )
+        .await?;
+    let mut cache = state.room_cache.lock().await;
+    if cache.len() >= 1024 {
+        let cutoff = now().saturating_sub(60_000);
+        cache.retain(|_, (at, _)| *at > cutoff);
+        if cache.len() >= 1024 {
+            cache.clear();
+        }
+    }
+    cache.insert(key, (now(), value.clone()));
+    Ok(value)
+}
 
 pub async fn context(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     let (_, s) = auth(&state, &headers, false).await?;
@@ -71,8 +100,7 @@ pub async fn user_rooms(
         let s = s.clone();
         let state = state.clone();
         tasks.spawn(async move {
-            let _permit = state.avatar_limit.acquire().await;
-            let result = s.matrix.request(&s.token, Method::GET, &format!("/_synapse/admin/v1/rooms/{}",encode(&id)),None).await;
+            let result = cached_room(&state, &s, &id).await;
             let row = match result {
                 Ok(v) => json!({"room_id":id,"name":v["name"],"avatar":v["avatar"],"canonical_alias":v["canonical_alias"],"joined_members":v["joined_members"]}),
                 Err(e) => json!({"room_id":id,"error":e.message})
@@ -204,18 +232,8 @@ pub async fn rooms(
         let s = s.clone();
         tasks.spawn(async move {
             let mut row = row;
-            let _permit = state.avatar_limit.acquire().await;
             if let Some(id) = row["room_id"].as_str() {
-                match s
-                    .matrix
-                    .request(
-                        &s.token,
-                        Method::GET,
-                        &format!("/_synapse/admin/v1/rooms/{}", encode(id)),
-                        None,
-                    )
-                    .await
-                {
+                match cached_room(&state, &s, id).await {
                     Ok(details) => {
                         row["avatar"] = details["avatar"].clone();
                     }

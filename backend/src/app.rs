@@ -54,6 +54,7 @@ pub struct Inner {
     pub directory_cache: Mutex<HashMap<String, crate::bridges::Directory>>,
     pub directory_lock: Mutex<()>,
     pub cleanup_plans: Mutex<HashMap<String, crate::bridges::Plan>>,
+    pub room_cache: Mutex<HashMap<String, (u64, Value)>>,
     policy_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 pub type AppState = Arc<Inner>;
@@ -75,6 +76,7 @@ impl Inner {
             directory_cache: Mutex::new(HashMap::new()),
             directory_lock: Mutex::new(()),
             cleanup_plans: Mutex::new(HashMap::new()),
+            room_cache: Mutex::new(HashMap::new()),
             policy_locks: Mutex::new(HashMap::new()),
         }))
     }
@@ -246,6 +248,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/bridges/preview", post(crate::bridges::preview))
         .route("/api/bridges/cleanup", post(crate::bridges::start))
         .route("/api/bridges/jobs", get(crate::bridges::jobs))
+        .route("/api/bridges/jobs/cancel", post(crate::bridges::cancel))
         .route("/api/session", get(session))
         .route("/api/logout", post(logout))
         .route("/api/catalog", get(get_catalog))
@@ -507,6 +510,12 @@ async fn admin(
     let result = crate::workspace::token_result(&state, &s, &input, result).await?;
     if mutating {
         state.directory_cache.lock().await.remove(&s.matrix.origin);
+        let prefix = format!("{}\0", s.matrix.origin);
+        state
+            .room_cache
+            .lock()
+            .await
+            .retain(|k, _| !k.starts_with(&prefix));
         audit(
             &state,
             &s,

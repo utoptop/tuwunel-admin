@@ -8,7 +8,8 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { admin, bytes, fmtDate, request, type Data } from "./api";
+import { admin, bytes, fmtDate, request, type Data, type Session } from "./api";
+import Avatar from "./Avatar";
 import {
   Badge,
   Button,
@@ -26,7 +27,13 @@ import type { Operate } from "./UsersRooms";
 import { MediaCleanup, MediaJobs } from "./MediaJobs";
 import { useInfinite, InfiniteEnd } from "./infinite";
 
-export function MediaPage({ operate }: { operate: Operate }) {
+export function MediaPage({
+  operate,
+  session,
+}: {
+  operate: Operate;
+  session?: Session;
+}) {
   const [tab, setTab] = useState("stats"),
     [selected, setSelected] = useState<Data[]>([]),
     [cleanup, setCleanup] = useState<Data[] | null>(null),
@@ -280,7 +287,32 @@ export function MediaPage({ operate }: { operate: Operate }) {
                 </Button>
               </form>
               <ErrorBox error={error} />
-              {metadata && <JsonView value={metadata} />}
+              {metadata && (
+                <>
+                  {metadata.media_type?.startsWith("image/") &&
+                    session?.homeserver && (
+                      <div className="user-room-row">
+                        <Avatar
+                          name={metadata.upload_name || mxc}
+                          mxc={mxc.trim()}
+                          homeserver={session.homeserver}
+                          large
+                        />
+                        <div>
+                          <strong>
+                            {metadata.upload_name || "图片媒体缩略预览"}
+                          </strong>
+                          <code>{mxc.trim()}</code>
+                          <small>
+                            {metadata.media_type} ·{" "}
+                            {bytes(metadata.media_length)}
+                          </small>
+                        </div>
+                      </div>
+                    )}
+                  <JsonView value={metadata} />
+                </>
+              )}
             </div>
           </Panel>
           <Panel

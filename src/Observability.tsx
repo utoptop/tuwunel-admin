@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowDownLeft,
   ArrowUpRight,
+  Clock3,
   Cpu,
   HardDrive,
   MemoryStick,
@@ -107,6 +108,13 @@ export default function Observability() {
     history = s?.history || [],
     r = s?.registrations;
   const rate = (v: number) => bytes(Math.round(v)) + "/s";
+  const fmtUptime = (sec?: number | null) => {
+    if (sec === undefined || sec === null) return "—";
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const min = Math.floor((sec % 3600) / 60);
+    return d > 0 ? `${d} 天 ${h} 小时` : h > 0 ? `${h} 小时 ${min} 分` : `${min} 分钟`;
+  };
   return (
     <>
       <PageTitle
@@ -257,6 +265,11 @@ export default function Observability() {
               <div className="concurrency-grid">
                 <Panel title="线程与连接" subtitle="实时进程与网络观测">
                   <div className="runtime-row">
+                    <Clock3 size={19} />
+                    <span>进程运行时长</span>
+                    <strong>{fmtUptime(m?.uptime_seconds)}</strong>
+                  </div>
+                  <div className="runtime-row">
                     <Cpu size={19} />
                     <span>进程线程数</span>
                     <strong>{m?.threads ?? "—"}</strong>
@@ -265,6 +278,29 @@ export default function Observability() {
                     <Network size={19} />
                     <span>已建立 TCP 连接</span>
                     <strong>{m?.tcp_connections ?? "—"}</strong>
+                  </div>
+                  <div className="runtime-row">
+                    <Settings2 size={19} />
+                    <span>打开文件句柄 (FD)</span>
+                    <strong>
+                      {m?.open_fds !== undefined && m?.open_fds !== null
+                        ? m?.max_fds
+                          ? `${m.open_fds} / ${m.max_fds}`
+                          : m.open_fds
+                        : "—"}
+                    </strong>
+                  </div>
+                  <div className="runtime-row">
+                    <HardDrive size={19} />
+                    <span>共享存储可用空间</span>
+                    <strong>
+                      {m?.disk_available_bytes !== undefined &&
+                      m?.disk_available_bytes !== null
+                        ? m?.disk_total_bytes
+                          ? `${bytes(m.disk_available_bytes)} / ${bytes(m.disk_total_bytes)}`
+                          : bytes(m.disk_available_bytes)
+                        : "—"}
+                    </strong>
                   </div>
                   <div className="runtime-row">
                     <Activity size={19} />

@@ -29,7 +29,7 @@ export default function Dashboard({
   const result = useLoad(async () => {
     const keys = ["users", "rooms", "media", "version", "audit", "policy"];
     const results = await Promise.allSettled([
-      admin("users", {}, { limit: 1, deactivated: true, locked: true }),
+      request("/directory", "POST", { from: 0 }),
       admin("rooms", {}, { limit: 1 }),
       admin("mediaStats", {}, { limit: 8, order_by: "media_length", dir: "b" }),
       admin("version"),
@@ -83,11 +83,11 @@ export default function Dashboard({
         {[
           {
             name: "本地用户",
-            value: d?.users?.data?.total,
+            value: d?.users?.data?.counts?.all ?? d?.users?.data?.total,
             icon: Users,
             tone: "blue",
             page: "users",
-            label: "含已停用与桥接账号",
+            label: "活跃、已停用与桥接账号",
             error: d?.users?.error,
           },
           {

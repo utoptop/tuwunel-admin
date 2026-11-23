@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   CheckCircle2,
   Code2,
+  Copy,
   Globe2,
   Plus,
   Search,
@@ -28,6 +29,7 @@ import type { Operate } from "./UsersRooms";
 
 export function TokensPage({ operate }: { operate: Operate }) {
   const result = useLoad(() => admin("tokens"));
+  const [copied, setCopied] = useState("");
   const fields = (row: Data = {}) => [
     {
       key: "uses_allowed",
@@ -142,6 +144,17 @@ export function TokensPage({ operate }: { operate: Operate }) {
                     <td>{t.expiry_time ? fmtDate(t.expiry_time) : "不过期"}</td>
                     <td>
                       <div className="actions">
+                        <Button
+                          kind="text"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(t.token);
+                            setCopied(t.token);
+                            setTimeout(() => setCopied(""), 1800);
+                          }}
+                        >
+                          <Copy size={13} />
+                          {copied === t.token ? "已复制" : "复制"}
+                        </Button>
                         <Button
                           kind="text"
                           disabled={t.read_only}
@@ -365,6 +378,14 @@ export function FederationPage({ operate }: { operate: Operate }) {
 }
 export function TasksPage() {
   const result = useLoad(() => admin("tasks"));
+  useEffect(() => {
+    const running = result.data?.scheduled_tasks?.some(
+      (t: Data) => t.status !== "complete" && t.status !== "failed",
+    );
+    if (!running) return;
+    const timer = setTimeout(() => result.reload(), 3000);
+    return () => clearTimeout(timer);
+  }, [result.data]);
   return (
     <>
       <PageTitle

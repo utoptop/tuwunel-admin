@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   LoaderCircle,
+  StopCircle,
   Trash2,
 } from "lucide-react";
 import Avatar from "./Avatar";
@@ -98,7 +99,7 @@ export function BridgeCleanup({
                 />
               </label>
               <p className="footnote">
-                预览有效期 10 分钟。清理完成后，已擦除的账号会自动归入「已擦除归档」视图（Matrix 协议会保留 ID 占位以防重用）。
+                预览有效期 10 分钟。清理完成后，已删除的账号将不再在系统内显示。
               </p>
             </>
           )
@@ -240,10 +241,27 @@ export function BridgeJobs({
                     complete: "已完成",
                     partial: "部分失败",
                     interrupted: "已中断",
+                    canceled: "已取消",
                   }[job.status as string] || job.status}
                 </Badge>
               </summary>
               {job.message && <p className="notice">{job.message}</p>}
+              {running && (
+                <div className="job-actions">
+                  <Button
+                    kind="danger-soft"
+                    onClick={async () => {
+                      await request("/bridges/jobs/cancel", "POST", {
+                        id: job.id,
+                      });
+                      window.dispatchEvent(new Event("bridge-jobs-updated"));
+                    }}
+                  >
+                    <StopCircle size={15} />
+                    停止后续清理
+                  </Button>
+                </div>
+              )}
               <div className="job-results">
                 {job.results.map((r: Data) => (
                   <div key={r.user_id} className="job-row">

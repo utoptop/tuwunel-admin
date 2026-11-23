@@ -84,19 +84,10 @@ export function UsersPage({
     result.reload();
   };
   const switchGroup = (value: string) => {
-    const nextIsBridge = !["regular", "all"].includes(value);
-    if (nextIsBridge && !isBridge) {
-      setFilter("unerased");
-    } else if (!nextIsBridge && isBridge && ["unerased", "erased"].includes(filter)) {
-      setFilter("all");
-    }
     setGroup(value);
     setChecked([]);
   };
-  const bridgeGroups =
-    filter === "unerased"
-      ? result.data?.pendingGroups || result.data?.groups || {}
-      : result.data?.groups || {};
+  const bridgeGroups = result.data?.groups || {};
   const create = () =>
     operate({
       title: "创建用户",
@@ -158,11 +149,7 @@ export function UsersPage({
       <div className="directory-tabs" role="group" aria-label="用户分类">
         {[
           ["regular", "普通用户", result.data?.counts?.regular],
-          [
-            "bridges",
-            "桥接用户",
-            result.data?.counts?.bridgesPending ?? result.data?.counts?.bridges,
-          ],
+          ["bridges", "桥接用户", result.data?.counts?.bridges],
           ["all", "全部账号", result.data?.counts?.all],
         ].map(([key, label, count]) => (
           <button
@@ -179,37 +166,10 @@ export function UsersPage({
       </div>
       {isBridge && (
         <div className="bridge-tools">
-          <div className="bridge-tools-copy">
-            <div className="bridge-subtabs" role="group" aria-label="桥接状态">
-              {[
-                [
-                  "unerased",
-                  "待清理",
-                  result.data?.counts?.bridgesPending,
-                ],
-                [
-                  "erased",
-                  "已擦除归档",
-                  result.data?.counts?.bridgesErased,
-                ],
-                ["all", "全部桥接", result.data?.counts?.bridges],
-              ].map(([key, label, count]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={filter === key ? "active" : ""}
-                  onClick={() => {
-                    setFilter(key);
-                    setChecked([]);
-                  }}
-                >
-                  {label}
-                  <span>{count ?? "—"}</span>
-                </button>
-              ))}
-            </div>
+          <div>
+            <strong>批量清理桥接用户</strong>
             <p>
-              按 Signal UUID、Telegram 数字 ID 或部署规则识别。清理完成后已擦除账号自动归入「已擦除归档」，请先停止对应桥接服务再执行清理。
+              按 Signal UUID、Telegram / WhatsApp / Discord / Meta / Google Messages 数字 ID 或部署规则识别。清理完成后已删除账号不再在系统中显示，请先停止对应桥接服务再执行清理。
             </p>
           </div>
           <div className="actions">
@@ -221,10 +181,10 @@ export function UsersPage({
             </Button>
             <Button
               kind="danger-soft"
-              disabled={!result.data?.total || filter === "erased"}
+              disabled={!result.data?.total}
               onClick={() => setCleanup({ all: true, filter: directoryFilter })}
             >
-              预览清理待处理桥接
+              预览清理全部桥接
             </Button>
           </div>
         </div>
@@ -237,15 +197,9 @@ export function UsersPage({
                 ? "成员目录"
                 : group === "all"
                   ? "全部账号"
-                  : filter === "erased"
-                    ? "已擦除的桥接账号（ID 占位归档）"
-                    : "待清理桥接成员"}
+                  : "桥接成员"}
             </h2>
-            <p>
-              {isBridge && filter === "erased"
-                ? "Matrix 协议保留已擦除账号的 ID 占位以防重用，资料、设备与媒体均已清空"
-                : "当前服务器上的用户与访问权限"}
-            </p>
+            <p>当前服务器上的用户与访问权限（已删除账号自动隐藏）</p>
           </div>
           <Badge>
             {result.data?.total === undefined
@@ -296,8 +250,6 @@ export function UsersPage({
             >
               <option value="all">全部状态（含停用）</option>
               <option value="active">正常活跃用户</option>
-              <option value="unerased">未擦除用户</option>
-              <option value="erased">已擦除归档</option>
               <option value="admin">仅管理员</option>
             </select>
           )}
@@ -321,15 +273,7 @@ export function UsersPage({
         {result.loading && !result.data ? (
           <Loading />
         ) : !result.data?.users?.length ? (
-          <Empty
-            text={
-              isBridge &&
-              filter === "unerased" &&
-              (result.data?.counts?.bridgesErased || 0) > 0
-                ? `所有桥接用户均已完成停用与擦除。Tuwunel 按 Matrix 协议保留了 ${result.data?.counts?.bridgesErased} 条已擦除的 ID 占位，可切换至「已擦除归档」查看。`
-                : "暂无匹配的用户"
-            }
-          />
+          <Empty text="暂无匹配的用户" />
         ) : (
           <div className="table-scroll">
             <table>
@@ -718,12 +662,83 @@ function UserDetail({
                     </Button>
                   )}
                   <Button
+                    onClick={() =>
+                      operate({
+                        title: "发送服务器通知",
+                        description: `向 ${id} 发送系统管理员通知（需服务器已配置 Server Notices）。`,
+                        fields: [
+                          {
+                            key: "body",
+                            label: "通知内容",
+                            required: true,
+                            hint: "将以系统通知房间的文本消息发送给该用户",
+                          },
+                        ],
+                        run: (v) =>
+                          admin(
+                            "notice",
+                            {},
+                            {},
+                            {
+                              user_id: id,
+                              content: { msgtype: "m.text", body: v.body },
+                            },
+                            true,
+                          ),
+                        showResult: true,
+                      })
+                    }
+                  >
+                    发送通知
+                  </Button>
+                  <Button
+                    kind="danger-soft"
+                    disabled={id === session.userId}
+                    onClick={() =>
+                      operate({
+                        title: "批量撤回用户事件",
+                        description: `后台批量撤回 ${id} 发送的消息事件（异步任务）。`,
+                        danger: true,
+                        fields: [
+                          {
+                            key: "rooms",
+                            label:
+                              "指定房间 ID（留空表示所有本地房间，多个用逗号分隔）",
+                          },
+                          {
+                            key: "reason",
+                            label: "撤回原因（可选）",
+                          },
+                        ],
+                        run: (v) =>
+                          admin(
+                            "redactUser",
+                            { user_id: id },
+                            {},
+                            {
+                              rooms: v.rooms
+                                ? String(v.rooms)
+                                    .split(",")
+                                    .map((s) => s.trim())
+                                    .filter(Boolean)
+                                : [],
+                              ...(v.reason ? { reason: v.reason } : {}),
+                            },
+                            true,
+                          ),
+                        showResult: true,
+                      })
+                    }
+                  >
+                    批量撤回消息
+                  </Button>
+                  <Button
                     kind="danger-soft"
                     disabled={id === session.userId || Boolean(u.erased)}
                     onClick={() =>
                       operate({
                         title: "停用并擦除用户资料",
-                        description: `将停用 ${id}、注销设备并执行 Tuwunel 的 erase 流程。此操作不会物理删除 Matrix ID。`,
+                        description: `将停用 ${id}、注销设备并执行 Tuwunel 的 erase 流程。完成后该账号将不在系统中显示。`,
                         danger: true,
                         run: () =>
                           admin(
@@ -896,16 +911,30 @@ function UserDetail({
                         const isAvatar =
                           Boolean(avatarMediaId) &&
                           m.media_id === avatarMediaId;
+                        const mxcUrl = m.media_type?.startsWith("image/")
+                          ? `mxc://${id.slice(id.indexOf(":") + 1)}/${m.media_id}`
+                          : "";
                         return (
                           <tr key={m.media_id}>
                             <td>
-                              <div className="inline">
-                                <strong>{m.upload_name || m.media_id}</strong>
-                                {isAvatar && (
-                                  <Badge tone="indigo">当前头像</Badge>
-                                )}
+                              <div className="identity">
+                                <Avatar
+                                  name={m.upload_name || m.media_id}
+                                  mxc={mxcUrl}
+                                  homeserver={session.homeserver}
+                                />
+                                <span>
+                                  <span className="inline">
+                                    <strong>
+                                      {m.upload_name || m.media_id}
+                                    </strong>
+                                    {isAvatar && (
+                                      <Badge tone="indigo">当前头像</Badge>
+                                    )}
+                                  </span>
+                                  <small>{m.media_type}</small>
+                                </span>
                               </div>
-                              <small>{m.media_type}</small>
                             </td>
                             <td className="num">{bytes(m.media_length)}</td>
                             <td className="num">{fmtDate(m.created_ts)}</td>
@@ -957,8 +986,62 @@ function UserDetail({
                 onChange={setFrom}
               />
             </>
+          ) : tab === "whois" && info.data ? (
+            <>
+              {(() => {
+                const connections = Object.entries(
+                  info.data.devices || {},
+                ).flatMap(([dev, d]: any) =>
+                  (d?.sessions || []).flatMap((s: any) =>
+                    (s?.connections || []).map((c: any) => ({
+                      device: dev,
+                      ip: c.ip,
+                      last_seen: c.last_seen,
+                      user_agent: c.user_agent,
+                    })),
+                  ),
+                );
+                return connections.length ? (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>设备 ID</th>
+                          <th>连接 IP</th>
+                          <th>客户端 User-Agent</th>
+                          <th>最后活跃</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {connections.map((c, i) => (
+                          <tr key={`${c.device}-${i}`}>
+                            <td>
+                              <code>{c.device}</code>
+                            </td>
+                            <td>
+                              <code>{c.ip || "—"}</code>
+                            </td>
+                            <td>{c.user_agent || "—"}</td>
+                            <td>{fmtDate(c.last_seen)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null;
+              })()}
+              <details className="raw" open>
+                <summary>查看原始连接数据</summary>
+                <JsonView value={info.data} />
+              </details>
+            </>
           ) : (
-            info.data && <JsonView value={info.data} />
+            info.data && (
+              <details className="raw" open>
+                <summary>查看完整数据</summary>
+                <JsonView value={info.data} />
+              </details>
+            )
           )}
         </div>
         <div className="modal-foot">
@@ -1128,6 +1211,7 @@ export function RoomsPage({
       {selected && (
         <RoomDetail
           id={selected}
+          session={session}
           operate={operate}
           onClose={() => {
             setSelected("");
@@ -1140,10 +1224,12 @@ export function RoomsPage({
 }
 function RoomDetail({
   id,
+  session,
   operate,
   onClose,
 }: {
   id: string;
+  session: Session;
   operate: Operate;
   onClose: () => void;
 }) {
@@ -1200,8 +1286,213 @@ function RoomDetail({
         <ErrorBox error={data.error} />
         {data.loading ? (
           <Loading />
+        ) : !data.data ? null : tab === "room" ? (
+          <>
+            <div className="detail-grid">
+              <div>
+                <small>房间名称</small>
+                <strong>{data.data.name || "未命名房间"}</strong>
+              </div>
+              <div>
+                <small>主别名</small>
+                <strong>{data.data.canonical_alias || "无"}</strong>
+              </div>
+              <div>
+                <small>创建者</small>
+                <strong>{data.data.creator || "—"}</strong>
+              </div>
+              <div>
+                <small>房间版本</small>
+                <strong>{data.data.version || "—"}</strong>
+              </div>
+              <div>
+                <small>成员 / 本地成员</small>
+                <strong>
+                  {data.data.joined_members ?? "—"} /{" "}
+                  {data.data.joined_local_members ?? "—"}
+                </strong>
+              </div>
+              <div>
+                <small>端到端加密</small>
+                <strong>{data.data.encryption || "未加密"}</strong>
+              </div>
+              <div>
+                <small>可见性与联邦</small>
+                <strong>
+                  {data.data.public ? "公开房间" : "私密房间"} ·{" "}
+                  {data.data.federatable === false ? "禁止联邦" : "允许联邦"}
+                </strong>
+              </div>
+              <div>
+                <small>历史可见性</small>
+                <strong>{data.data.history_visibility || "—"}</strong>
+              </div>
+            </div>
+            <details className="raw">
+              <summary>查看原始房间 JSON</summary>
+              <JsonView value={data.data} />
+            </details>
+          </>
+        ) : tab === "roomMembers" ? (
+          <>
+            {Array.isArray(data.data.members) && data.data.members.length > 0 ? (
+              <div className="cleanup-targets">
+                {data.data.members.map((member: string) => (
+                  <div className="user-room-row" key={member}>
+                    <Avatar name={member} homeserver={session.homeserver} />
+                    <div>
+                      <strong>{member.split(":")[0].slice(1)}</strong>
+                      <code>{member}</code>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty text="暂无房间成员" />
+            )}
+            <details className="raw">
+              <summary>查看原始成员 JSON</summary>
+              <JsonView value={data.data} />
+            </details>
+          </>
+        ) : tab === "roomMessages" ? (
+          <>
+            {Array.isArray(data.data.chunk) && data.data.chunk.length > 0 ? (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>发送者</th>
+                      <th>事件类型</th>
+                      <th>时间</th>
+                      <th>摘要 / Event ID</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.data.chunk.map((e: Data, i: number) => (
+                      <tr key={e.event_id || i}>
+                        <td>
+                          <code>{e.sender || "—"}</code>
+                        </td>
+                        <td>
+                          <Badge>{e.type || "event"}</Badge>
+                        </td>
+                        <td className="nowrap">
+                          {fmtDate(e.origin_server_ts)}
+                        </td>
+                        <td className="break">
+                          {e.content?.body ||
+                            e.content?.membership ||
+                            e.event_id ||
+                            "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <Empty text="暂无房间事件" />
+            )}
+            <details className="raw">
+              <summary>查看原始事件 JSON</summary>
+              <JsonView value={data.data} />
+            </details>
+          </>
+        ) : tab === "roomMedia" ? (
+          <>
+            {[
+              ...(data.data.local || []).map((mxc: string) => ({
+                mxc,
+                local: true,
+              })),
+              ...(data.data.remote || []).map((mxc: string) => ({
+                mxc,
+                local: false,
+              })),
+            ].length > 0 ? (
+              <div className="cleanup-targets">
+                {[
+                  ...(data.data.local || []).map((mxc: string) => ({
+                    mxc,
+                    local: true,
+                  })),
+                  ...(data.data.remote || []).map((mxc: string) => ({
+                    mxc,
+                    local: false,
+                  })),
+                ].map(({ mxc, local }) => {
+                  const match = /^mxc:\/\/([^/]+)\/([^/?#]+)$/.exec(mxc);
+                  return (
+                    <div className="user-room-row" key={mxc}>
+                      <Avatar
+                        name={mxc}
+                        mxc={mxc}
+                        homeserver={session.homeserver}
+                      />
+                      <div>
+                        <strong>{local ? "本地房间媒体" : "远程缓存媒体"}</strong>
+                        <code>{mxc}</code>
+                      </div>
+                      {local && match && (
+                        <Button
+                          kind="danger-soft"
+                          onClick={() =>
+                            operate({
+                              title: "删除房间本地媒体",
+                              description: mxc,
+                              danger: true,
+                              run: () =>
+                                admin(
+                                  "deleteMedia",
+                                  {
+                                    server_name: match[1],
+                                    media_id: match[2],
+                                  },
+                                  {},
+                                  {},
+                                  true,
+                                ),
+                              onDone: data.reload,
+                            })
+                          }
+                        >
+                          删除
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty text="房间内暂无媒体记录" />
+            )}
+            <details className="raw">
+              <summary>查看原始媒体 JSON</summary>
+              <JsonView value={data.data} />
+            </details>
+          </>
+        ) : tab === "roomBlock" ? (
+          <>
+            <div className="detail-grid">
+              <div>
+                <small>封禁状态</small>
+                <strong>
+                  {data.data.block ? "已封禁" : "正常（未封禁）"}
+                </strong>
+              </div>
+              <div>
+                <small>操作管理员</small>
+                <strong>{data.data.user_id || "—"}</strong>
+              </div>
+            </div>
+            <details className="raw">
+              <summary>查看原始状态 JSON</summary>
+              <JsonView value={data.data} />
+            </details>
+          </>
         ) : (
-          data.data && <JsonView value={data.data} />
+          <JsonView value={data.data} />
         )}
         {tab === "roomMessages" &&
           data.data?.end &&
